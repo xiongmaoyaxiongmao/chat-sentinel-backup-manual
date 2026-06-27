@@ -142,6 +142,20 @@ function snapshotsForKey(snapshotDir, keyHash, limit = 100) {
         .slice(0, Math.max(1, Math.min(Number(limit) || 100, 500)));
 }
 
+function snapshotPathForKey(snapshotDir, keyHash, name) {
+    const safeName = path.basename(String(name || ''));
+    if (!safeName.endsWith('.jsonl') || !safeName.includes(`_${keyHash}_`)) {
+        throw new Error('snapshot does not belong to the current chat');
+    }
+
+    const filePath = path.join(snapshotDir, safeName);
+    if (!isPathInside(snapshotDir, filePath) || !fs.existsSync(filePath)) {
+        throw new Error('snapshot was not found');
+    }
+
+    return filePath;
+}
+
 function keptSnapshotName(name, keyHash, shouldKeep) {
     if (shouldKeep && !isKeptSnapshot(name)) {
         return name.replace(`_${keyHash}_`, `_${keyHash}${KEEP_MARK}`);
@@ -183,6 +197,23 @@ function setSnapshotsKept(snapshotDir, keyHash, names, shouldKeep) {
     }
 
     return changes;
+}
+
+function deleteSnapshots(snapshotDir, keyHash, names) {
+    const selected = new Set((Array.isArray(names) ? names : []).map((name) => path.basename(String(name))));
+    let deleted = 0;
+
+    for (const name of selected) {
+        try {
+            const filePath = snapshotPathForKey(snapshotDir, keyHash, name);
+            fs.unlinkSync(filePath);
+            deleted += 1;
+        } catch (error) {
+            console.warn('[chat-sentinel-backup] skipped snapshot delete:', name, error.message);
+        }
+    }
+
+    return deleted;
 }
 
 function snapshotFiles(snapshotDir, body, chatFiles) {
@@ -270,6 +301,56 @@ function getEntityChatFiles(request, body) {
         .filter((filePath) => isPathInside(chatDir, filePath));
 }
 
+function withJsonlExtension(name) {
+    const baseName = path.basename(String(name || ''));
+    if (!baseName) {
+        throw new Error('当前没有可覆盖的聊天文件。');
+    }
+
+    return baseName.endsWith('.jsonl') ? baseName : `${baseName}.jsonl`;
+}
+
+function getActiveChatFilePath(request, body) {
+    const chatId = withJsonlExtension(body.chatId);
+
+    if (body.isGroup) {
+        const groupChatsDir = request.user?.directories?.groupChats;
+        if (!groupChatsDir) {
+            throw new Error('group chats directory is unavailable');
+        }
+
+        const targetPath = path.join(groupChatsDir, sanitize(chatId));
+        if (!isPathInside(groupChatsDir, targetPath)) {
+            throw new Error('group chat file is invalid');
+        }
+
+        return targetPath;
+    }
+
+    const avatar = String(body.entityId || '');
+    if (!avatar) {
+        throw new Error('请先打开一个角色聊天。');
+    }
+
+    const chatsDir = request.user?.directories?.chats;
+    if (!chatsDir) {
+        throw new Error('character chats directory is unavailable');
+    }
+
+    const chatDir = path.join(chatsDir, avatar.replace(/\.png$/i, ''));
+    if (!isPathInside(chatsDir, chatDir)) {
+        throw new Error('character chat directory is invalid');
+    }
+
+    fs.mkdirSync(chatDir, { recursive: true });
+    const targetPath = path.join(chatDir, sanitize(chatId));
+    if (!isPathInside(chatDir, targetPath)) {
+        throw new Error('chat file is invalid');
+    }
+
+    return targetPath;
+}
+
 function trimOldSnapshots(snapshotDir, keyHash, keepPerChat) {
     const limit = Math.max(1, Math.min(Number(keepPerChat) || DEFAULT_KEEP_PER_CHAT, MAX_KEEP_PER_CHAT));
     const files = fs.readdirSync(snapshotDir)
@@ -306,6 +387,32 @@ function latestSnapshots(snapshotDir, limit = 20) {
         })
         .sort((a, b) => b.mtimeMs - a.mtimeMs)
         .slice(0, Math.max(1, Math.min(Number(limit) || 20, 100)));
+}
+
+function readJsonlObjects(filePath) {
+    return fs.readFileSync(filePath, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line));
+}
+
+function previewSnapshot(filePath, rounds = 2) {
+    const objects = readJsonlObjects(filePath);
+    const messages = objects
+        .slice(1)
+        .filter((item) => item && typeof item === 'object' && ('mes' in item || 'name' in item));
+    const limit = Math.max(2, Math.min((Number(rounds) || 2) * 2, 12));
+
+    return {
+        name: path.basename(filePath),
+        messageCount: messages.length,
+        messages: messages.slice(-limit).map((message) => ({
+            name: String(message.name || (message.is_user ? 'User' : 'Assistant')),
+            is_user: Boolean(message.is_user),
+            send_date: message.send_date || message.send_date_full || '',
+            mes: String(message.mes || '').slice(0, 2000),
+        })),
+    };
 }
 
 async function init(router) {
@@ -453,6 +560,64 @@ async function init(router) {
             });
         } catch (error) {
             console.error('[chat-sentinel-backup] versions keep failed:', error);
+            return response.status(500).json({ ok: false, error: error.message });
+        }
+    });
+
+    router.post('/versions/delete', (request, response) => {
+        try {
+            const body = request.body || {};
+            const snapshotDir = getSnapshotDirectory(request);
+            const keyHash = keyHashFor(body);
+            const deleted = deleteSnapshots(snapshotDir, keyHash, body.selected);
+            return response.json({
+                ok: true,
+                directory: snapshotDir,
+                keyHash,
+                deleted,
+                snapshots: snapshotsForKey(snapshotDir, keyHash, request.body?.limit),
+            });
+        } catch (error) {
+            console.error('[chat-sentinel-backup] versions delete failed:', error);
+            return response.status(500).json({ ok: false, error: error.message });
+        }
+    });
+
+    router.post('/versions/preview', (request, response) => {
+        try {
+            const body = request.body || {};
+            const snapshotDir = getSnapshotDirectory(request);
+            const keyHash = keyHashFor(body);
+            const filePath = snapshotPathForKey(snapshotDir, keyHash, body.name);
+            return response.json({
+                ok: true,
+                ...previewSnapshot(filePath, body.rounds),
+            });
+        } catch (error) {
+            console.error('[chat-sentinel-backup] versions preview failed:', error);
+            return response.status(500).json({ ok: false, error: error.message });
+        }
+    });
+
+    router.post('/versions/restore', (request, response) => {
+        try {
+            const body = request.body || {};
+            const snapshotDir = getSnapshotDirectory(request);
+            const keyHash = keyHashFor(body);
+            const sourcePath = snapshotPathForKey(snapshotDir, keyHash, body.name);
+            const targetPath = getActiveChatFilePath(request, body);
+            const tempPath = `${targetPath}.sentinel-restore-${Date.now()}.tmp`;
+
+            fs.copyFileSync(sourcePath, tempPath);
+            fs.renameSync(tempPath, targetPath);
+
+            return response.json({
+                ok: true,
+                restored: path.basename(sourcePath),
+                target: path.basename(targetPath),
+            });
+        } catch (error) {
+            console.error('[chat-sentinel-backup] versions restore failed:', error);
             return response.status(500).json({ ok: false, error: error.message });
         }
     });

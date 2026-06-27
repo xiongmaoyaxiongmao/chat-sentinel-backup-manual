@@ -288,6 +288,7 @@ function renderVersions(snapshots) {
     }
 
     list.innerHTML = '';
+    clearVersionPreview();
     if (!snapshots?.length) {
         setEmptyText(list, '当前聊天还没有守护快照。');
         return;
@@ -295,7 +296,7 @@ function renderVersions(snapshots) {
 
     for (const item of snapshots) {
         const label = document.createElement('label');
-        label.className = 'chat_sentinel_pick_item';
+        label.className = 'chat_sentinel_pick_item chat_sentinel_version_item';
         label.title = item.name;
 
         if (item.kept) {
@@ -319,6 +320,62 @@ function renderVersions(snapshots) {
 
         label.append(checkbox, text, meta);
         list.append(label);
+    }
+}
+
+function selectedVersionNames() {
+    return Array.from(document.querySelectorAll('.chat_sentinel_version_checkbox:checked')).map((item) => item.value);
+}
+
+function clearVersionPreview(message = '') {
+    const preview = document.getElementById('chat_sentinel_version_preview');
+    if (!preview) {
+        return;
+    }
+
+    preview.innerHTML = '';
+    preview.hidden = !message;
+    if (message) {
+        const empty = document.createElement('div');
+        empty.className = 'chat_sentinel_empty';
+        empty.textContent = message;
+        preview.append(empty);
+    }
+}
+
+function renderVersionPreview(result) {
+    const preview = document.getElementById('chat_sentinel_version_preview');
+    if (!preview) {
+        return;
+    }
+
+    preview.innerHTML = '';
+    preview.hidden = false;
+
+    const title = document.createElement('div');
+    title.className = 'chat_sentinel_preview_title';
+    title.textContent = `${displaySnapshotName(result.name)} · 共 ${result.messageCount} 条 · 显示最后 2 轮`;
+    preview.append(title);
+
+    if (!result.messages?.length) {
+        setEmptyText(preview, '这个快照里没有可预览的消息。');
+        return;
+    }
+
+    for (const message of result.messages) {
+        const item = document.createElement('div');
+        item.className = `chat_sentinel_preview_message ${message.is_user ? 'is_user' : 'is_reply'}`;
+
+        const byline = document.createElement('div');
+        byline.className = 'chat_sentinel_preview_byline';
+        byline.textContent = message.name || (message.is_user ? 'User' : 'Assistant');
+
+        const text = document.createElement('div');
+        text.className = 'chat_sentinel_preview_text';
+        text.textContent = message.mes || '';
+
+        item.append(byline, text);
+        preview.append(item);
     }
 }
 
@@ -351,7 +408,7 @@ async function loadVersions(force = false) {
 }
 
 async function setSelectedVersionsKept(keep) {
-    const selected = Array.from(document.querySelectorAll('.chat_sentinel_version_checkbox:checked')).map((item) => item.value);
+    const selected = selectedVersionNames();
     if (selected.length === 0) {
         setStatus('还没有勾选要处理的快照版本。', true);
         toastr.warning('请先勾选快照版本', '聊天记录守护备份');
@@ -374,6 +431,89 @@ async function setSelectedVersionsKept(keep) {
     } catch (error) {
         console.error('[chat-sentinel-backup] version keep failed:', error);
         setStatus(`处理快照版本失败：${error.message}`, true);
+        toastr.error(error.message, '聊天记录守护备份');
+    }
+}
+
+async function previewSelectedVersion(showWarning = true) {
+    const selected = selectedVersionNames();
+    if (selected.length === 0) {
+        clearVersionPreview('先勾选一个快照，再查看里面的最后两轮。');
+        if (showWarning) {
+            setStatus('还没有勾选要查看的快照版本。', true);
+        }
+        return;
+    }
+
+    try {
+        const result = await postJson('/versions/preview', {
+            ...currentVersionPayload(),
+            name: selected[0],
+            rounds: 2,
+        });
+        renderVersionPreview(result);
+        setStatus(selected.length > 1 ? '已显示第一个已选快照的最后两轮。' : '已显示快照最后两轮。');
+    } catch (error) {
+        console.error('[chat-sentinel-backup] version preview failed:', error);
+        clearVersionPreview(`读取快照内容失败：${error.message}`);
+        setStatus(`读取快照内容失败：${error.message}`, true);
+    }
+}
+
+async function deleteSelectedVersions() {
+    const selected = selectedVersionNames();
+    if (selected.length === 0) {
+        setStatus('还没有勾选要删除的快照版本。', true);
+        toastr.warning('请先勾选快照版本', '聊天记录守护备份');
+        return;
+    }
+
+    if (!window.confirm(`删除 ${selected.length} 个守护快照？这不会删除 SillyTavern 当前聊天。`)) {
+        return;
+    }
+
+    try {
+        const result = await postJson('/versions/delete', {
+            ...currentVersionPayload(),
+            selected,
+            limit: 200,
+        });
+        renderVersions(result.snapshots);
+        setStatus(`已删除 ${result.deleted} 个快照版本。`);
+        toastr.success(`已删除 ${result.deleted} 个版本`, '聊天记录守护备份');
+        await refreshList(false);
+    } catch (error) {
+        console.error('[chat-sentinel-backup] version delete failed:', error);
+        setStatus(`删除快照版本失败：${error.message}`, true);
+        toastr.error(error.message, '聊天记录守护备份');
+    }
+}
+
+async function restoreSelectedVersion() {
+    const selected = selectedVersionNames();
+    if (selected.length !== 1) {
+        setStatus('覆盖当前聊天时只能勾选一个快照。', true);
+        toastr.warning('请只勾选一个快照版本', '聊天记录守护备份');
+        return;
+    }
+
+    const ok = window.confirm('用这个快照覆盖当前聊天文件？当前聊天会变成该快照内容。覆盖后请刷新或重新打开这个聊天。');
+    if (!ok) {
+        return;
+    }
+
+    try {
+        const result = await postJson('/versions/restore', {
+            ...currentVersionPayload(),
+            name: selected[0],
+        });
+        setStatus(`已用快照覆盖当前聊天文件：${result.target}。请刷新或重新打开这个聊天。`);
+        toastr.success('已覆盖当前聊天文件，请重新打开聊天查看', '聊天记录守护备份');
+        await loadVersions(true);
+        await refreshList(false);
+    } catch (error) {
+        console.error('[chat-sentinel-backup] version restore failed:', error);
+        setStatus(`覆盖当前聊天失败：${error.message}`, true);
         toastr.error(error.message, '聊天记录守护备份');
     }
 }
@@ -576,10 +716,20 @@ function bindSettingsUi() {
     $(document).on('click', '#chat_sentinel_backup_all', () => runEntitySnapshot());
     $(document).on('click', '#chat_sentinel_choose', () => loadPicker(true));
     $(document).on('click', '#chat_sentinel_versions_open', () => loadVersions(true));
-    $(document).on('click', '#chat_sentinel_versions_all', () => $('.chat_sentinel_version_checkbox').prop('checked', true));
-    $(document).on('click', '#chat_sentinel_versions_none', () => $('.chat_sentinel_version_checkbox').prop('checked', false));
+    $(document).on('click', '#chat_sentinel_versions_all', () => {
+        $('.chat_sentinel_version_checkbox').prop('checked', true);
+        clearVersionPreview('已全选。点“查看两轮”会显示第一个已选快照。');
+    });
+    $(document).on('click', '#chat_sentinel_versions_none', () => {
+        $('.chat_sentinel_version_checkbox').prop('checked', false);
+        clearVersionPreview();
+    });
+    $(document).on('change', '.chat_sentinel_version_checkbox', () => previewSelectedVersion(false));
+    $(document).on('click', '#chat_sentinel_versions_preview', () => previewSelectedVersion(true));
     $(document).on('click', '#chat_sentinel_versions_keep', () => setSelectedVersionsKept(true));
     $(document).on('click', '#chat_sentinel_versions_unkeep', () => setSelectedVersionsKept(false));
+    $(document).on('click', '#chat_sentinel_versions_delete', () => deleteSelectedVersions());
+    $(document).on('click', '#chat_sentinel_versions_restore', () => restoreSelectedVersion());
     $(document).on('click', '#chat_sentinel_select_all', () => $('.chat_sentinel_pick_checkbox').prop('checked', true));
     $(document).on('click', '#chat_sentinel_select_none', () => $('.chat_sentinel_pick_checkbox').prop('checked', false));
     $(document).on('click', '#chat_sentinel_backup_selected', () => runSelectedSnapshot());
