@@ -50,3 +50,5 @@ Restart SillyTavern after installing or updating the plugin.
 ## Manual
 
 See [docs/chat-sentinel-backup-manual.md](docs/chat-sentinel-backup-manual.md).
+
+For maintainer handoff context from the original build/debug thread, see [docs/project-context.md](docs/project-context.md).
