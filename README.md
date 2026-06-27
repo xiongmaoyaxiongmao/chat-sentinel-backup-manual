@@ -9,16 +9,25 @@ This repository contains two parts:
 
 ## Install
 
-Copy the server plugin:
+Recommended local install/update on macOS:
 
 ```bash
-cp -R plugins/chat-sentinel-backup /path/to/SillyTavern/plugins/chat-sentinel-backup
+./install-or-update.command
 ```
 
-Copy the frontend extension:
+Or double-click `install-or-update.command` in Finder.
+
+The script will:
+
+- run `git pull --ff-only` when this folder is a Git repo;
+- mount the frontend extension into `data/default-user/extensions/chat-sentinel-backup`;
+- mount the server plugin into `plugins/chat-sentinel-backup`;
+- run a quick syntax check.
+
+If your SillyTavern folder is not in the default location, run:
 
 ```bash
-cp -R extensions/chat-sentinel-backup /path/to/SillyTavern/data/default-user/extensions/chat-sentinel-backup
+SILLYTAVERN_DIR="/path/to/SillyTavern" ./install-or-update.command
 ```
 
 Make sure server plugins are enabled in SillyTavern config:
