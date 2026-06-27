@@ -236,7 +236,7 @@ function getEntityChatFiles(request, body) {
     if (body.isGroup) {
         const groupId = String(body.entityId || '');
         if (!groupId) {
-            throw new Error('group id is required');
+            throw new Error('请先打开一个群聊。');
         }
 
         let chatIds = Array.isArray(body.groupChatIds) ? body.groupChatIds : [];
@@ -253,7 +253,7 @@ function getEntityChatFiles(request, body) {
 
     const avatar = String(body.entityId || '');
     if (!avatar) {
-        throw new Error('character avatar is required');
+        throw new Error('请先打开一个角色聊天。');
     }
 
     const chatDir = path.join(request.user.directories.chats, avatar.replace(/\.png$/i, ''));
@@ -300,6 +300,7 @@ function latestSnapshots(snapshotDir, limit = 20) {
                 name,
                 size: stat.size,
                 mtimeMs: stat.mtimeMs,
+                messageCount: snapshotMessageCountFromName(name),
                 kept: isKeptSnapshot(name),
             };
         })

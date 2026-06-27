@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "local",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "homePage": "",
     "description": "把当前聊天额外保存到服务器专用 JSONL 快照目录，避免浏览器缓存或聊天列表异常导致记录难以找回。"
 }

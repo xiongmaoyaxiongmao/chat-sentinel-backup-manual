@@ -20,20 +20,21 @@
                 </label>
             </div>
             <div class="chat_sentinel_actions">
-                <button id="chat_sentinel_backup_now" class="menu_button">立即备份</button>
-                <button id="chat_sentinel_backup_all" class="menu_button" title="把当前角色卡或群聊名下的所有聊天文件都写入守护快照。">备份本卡全部聊天</button>
-                <button id="chat_sentinel_choose" class="menu_button">选择聊天备份</button>
-                <button id="chat_sentinel_versions_open" class="menu_button">管理当前版本</button>
-                <button id="chat_sentinel_refresh" class="menu_button">刷新状态</button>
+                <button id="chat_sentinel_backup_now" class="menu_button chat_sentinel_primary">立即备份</button>
+                <button id="chat_sentinel_versions_open" class="menu_button">管理版本</button>
+                <button id="chat_sentinel_backup_all" class="menu_button" title="把当前角色卡或群聊名下的所有聊天文件都写入守护快照。">整卡备份</button>
+                <button id="chat_sentinel_choose" class="menu_button">选择聊天</button>
+                <button id="chat_sentinel_refresh" class="menu_button">刷新</button>
             </div>
         </div>
+        <div id="chat_sentinel_status" class="chat_sentinel_status">等待初始化...</div>
         <div id="chat_sentinel_versions" class="chat_sentinel_picker" hidden>
             <div class="chat_sentinel_picker_bar">
-                <b>当前聊天的快照版本</b>
+                <b>当前聊天版本</b>
                 <div class="chat_sentinel_picker_actions">
                     <button id="chat_sentinel_versions_all" class="menu_button">全选</button>
                     <button id="chat_sentinel_versions_none" class="menu_button">清空</button>
-                    <button id="chat_sentinel_versions_keep" class="menu_button">保留已选版本</button>
+                    <button id="chat_sentinel_versions_keep" class="menu_button">保留已选</button>
                     <button id="chat_sentinel_versions_unkeep" class="menu_button">取消保留</button>
                 </div>
             </div>
@@ -41,7 +42,7 @@
         </div>
         <div id="chat_sentinel_picker" class="chat_sentinel_picker" hidden>
             <div class="chat_sentinel_picker_bar">
-                <b>选择要备份的聊天</b>
+                <b>选择聊天</b>
                 <div class="chat_sentinel_picker_actions">
                     <button id="chat_sentinel_select_all" class="menu_button">全选</button>
                     <button id="chat_sentinel_select_none" class="menu_button">清空</button>
@@ -50,7 +51,6 @@
             </div>
             <div id="chat_sentinel_picker_list" class="chat_sentinel_picker_list">尚未加载。</div>
         </div>
-        <div id="chat_sentinel_status" class="chat_sentinel_status">等待初始化...</div>
         <div id="chat_sentinel_list" class="chat_sentinel_list"></div>
     </div>
 </div>

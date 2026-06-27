@@ -78,10 +78,20 @@ function currentEntity() {
     const character = this_chid !== undefined ? characters[this_chid] : null;
     return {
         isGroup: false,
-        entityId: character?.avatar || String(this_chid ?? ''),
+        entityId: character?.avatar || '',
         entityName: character?.name || name2 || 'character',
         chatId: character?.chat || getCurrentChatId(),
     };
+}
+
+function requireDirectoryEntity(entity = currentEntity()) {
+    if (!entity.isGroup && !entity.entityId) {
+        throw new Error('请先打开一个角色聊天。');
+    }
+    if (entity.isGroup && !entity.entityId) {
+        throw new Error('请先打开一个群聊。');
+    }
+    return entity;
 }
 
 function buildSnapshotPayload(reason) {
@@ -160,9 +170,9 @@ async function runSnapshot(reason = 'manual') {
         lastSnapshotAt = Date.now();
 
         if (result.skipped) {
-            setStatus(`没有变化，已跳过重复快照。目录：${result.directory}`);
+            setStatus('没有变化，已跳过重复快照。');
         } else {
-            setStatus(`已备份 ${result.messageCount} 条消息：${result.file}`);
+            setStatus(`已备份当前聊天，${result.messageCount} 条消息。`);
         }
 
         await refreshList(false);
@@ -191,13 +201,13 @@ async function runEntitySnapshot() {
         }
 
         const payload = {
-            ...currentEntity(),
+            ...requireDirectoryEntity(),
             reason: 'manual-all',
             keepPerChat: currentSettings.keepPerChat,
         };
         const result = await postJson('/snapshot-all', payload);
         const skippedText = result.skipped ? `，跳过 ${result.skipped} 个空文件或异常文件` : '';
-        setStatus(`已备份当前${payload.isGroup ? '群聊' : '角色卡'} ${result.written}/${result.total} 个聊天文件${skippedText}。目录：${result.directory}`);
+        setStatus(`已备份当前${payload.isGroup ? '群聊' : '角色卡'}：${result.written}/${result.total}${skippedText}。`);
         toastr.success(`已备份 ${result.written} 个聊天文件`, '聊天记录守护备份');
         await refreshList(false);
     } catch (error) {
@@ -241,6 +251,36 @@ function formatDateTime(mtimeMs) {
     return date.toLocaleString();
 }
 
+function formatShortTime(mtimeMs) {
+    const date = new Date(Number(mtimeMs) || 0);
+    if (Number.isNaN(date.getTime())) {
+        return '';
+    }
+    return date.toLocaleString([], {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+}
+
+function displaySnapshotName(name) {
+    return String(name || '')
+        .replace(/^\d{8}-\d{6}_(char|group)_/, '')
+        .replace(/_[a-f0-9]{16}(?:_KEEP)?_m\d+\.jsonl$/, '')
+        .replace(/_/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() || name;
+}
+
+function setEmptyText(element, text) {
+    element.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'chat_sentinel_empty';
+    empty.textContent = text;
+    element.append(empty);
+}
+
 function renderVersions(snapshots) {
     const list = document.getElementById('chat_sentinel_versions_list');
     if (!list) {
@@ -249,7 +289,7 @@ function renderVersions(snapshots) {
 
     list.innerHTML = '';
     if (!snapshots?.length) {
-        list.textContent = '当前聊天还没有守护快照。可以先点“立即备份”。';
+        setEmptyText(list, '当前聊天还没有守护快照。');
         return;
     }
 
@@ -269,7 +309,7 @@ function renderVersions(snapshots) {
 
         const text = document.createElement('span');
         text.className = 'chat_sentinel_pick_name';
-        text.textContent = item.name;
+        text.textContent = displaySnapshotName(item.name);
 
         const meta = document.createElement('span');
         meta.className = 'chat_sentinel_pick_meta';
@@ -346,7 +386,7 @@ function renderPicker(chats) {
 
     list.innerHTML = '';
     if (!chats?.length) {
-        list.textContent = '当前角色卡或群聊没有可选择的聊天文件。';
+        setEmptyText(list, '当前角色卡或群聊没有可选择的聊天。');
         return;
     }
 
@@ -380,15 +420,15 @@ async function loadPicker(force = false) {
         return;
     }
 
-    const entity = currentEntity();
-    const key = entityPickerKey(entity);
     picker.hidden = false;
 
-    if (!force && pickerLoadedFor === key && list.children.length > 0) {
-        return;
-    }
-
     try {
+        const entity = requireDirectoryEntity();
+        const key = entityPickerKey(entity);
+        if (!force && pickerLoadedFor === key && list.children.length > 0) {
+            return;
+        }
+
         list.textContent = '正在读取聊天列表...';
         const result = await postJson('/entity-chats', entity);
         pickerLoadedFor = key;
@@ -397,7 +437,7 @@ async function loadPicker(force = false) {
     } catch (error) {
         console.error('[chat-sentinel-backup] picker load failed:', error);
         list.textContent = `读取失败：${error.message}`;
-        setStatus(`读取可选聊天失败：${error.message}`, true);
+        setStatus(error.message, true);
     }
 }
 
@@ -422,14 +462,14 @@ async function runSelectedSnapshot() {
         }
 
         const payload = {
-            ...currentEntity(),
+            ...requireDirectoryEntity(),
             reason: 'manual-selected',
             keepPerChat: currentSettings.keepPerChat,
             selected,
         };
         const result = await postJson('/snapshot-selected', payload);
         const skippedText = result.skipped ? `，跳过 ${result.skipped} 个` : '';
-        setStatus(`已备份已选聊天 ${result.written}/${result.total} 个${skippedText}。目录：${result.directory}`);
+        setStatus(`已备份已选聊天：${result.written}/${result.total}${skippedText}。`);
         toastr.success(`已备份 ${result.written} 个已选聊天`, '聊天记录守护备份');
         await refreshList(false);
     } catch (error) {
@@ -469,7 +509,7 @@ async function refreshList(showToast = true) {
         list.innerHTML = '';
 
         if (!result.snapshots?.length) {
-            list.textContent = `暂无守护快照。目录：${result.directory}`;
+            setEmptyText(list, '暂无守护快照。');
         } else {
             for (const snapshot of result.snapshots) {
                 const item = document.createElement('div');
@@ -478,11 +518,13 @@ async function refreshList(showToast = true) {
                 const name = document.createElement('div');
                 name.className = 'chat_sentinel_name';
                 name.title = snapshot.name;
-                name.textContent = snapshot.name;
+                name.textContent = displaySnapshotName(snapshot.name);
 
                 const meta = document.createElement('div');
                 meta.className = 'chat_sentinel_meta';
-                meta.textContent = `${snapshot.kept ? 'KEEP · ' : ''}${Math.ceil(snapshot.size / 1024)} KB`;
+                const keepText = snapshot.kept ? 'KEEP · ' : '';
+                const messageText = snapshot.messageCount === null ? '' : `${snapshot.messageCount} 条 · `;
+                meta.textContent = `${keepText}${messageText}${formatBytes(snapshot.size)} · ${formatShortTime(snapshot.mtimeMs)}`;
 
                 item.append(name, meta);
                 list.append(item);
@@ -490,7 +532,7 @@ async function refreshList(showToast = true) {
         }
 
         if (showToast) {
-            setStatus(`快照目录：${result.directory}`);
+            setStatus('已刷新快照列表。');
         }
     } catch (error) {
         console.error('[chat-sentinel-backup] list failed:', error);
