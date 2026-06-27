@@ -21,6 +21,12 @@ echo
 echo "正在修复安装链接..."
 PLUGIN_LINK="$ST/plugins/chat-sentinel-backup"
 EXT_LINK="$ST/data/default-user/extensions/chat-sentinel-backup"
+ARCHIVE="$REPO/local-backups"
+
+mkdir -p "$ARCHIVE/extensions" "$ARCHIVE/plugins"
+
+find "$ST/data/default-user/extensions" -maxdepth 1 -type d -name 'chat-sentinel-backup.bak-*' -exec mv {} "$ARCHIVE/extensions/" \;
+find "$ST/plugins" -maxdepth 1 -type d -name 'chat-sentinel-backup.bak-*' -exec mv {} "$ARCHIVE/plugins/" \;
 
 if [ -e "$PLUGIN_LINK" ] && [ ! -L "$PLUGIN_LINK" ]; then
   mv "$PLUGIN_LINK" "$PLUGIN_LINK.bak-$(date +%Y%m%d-%H%M%S)"
