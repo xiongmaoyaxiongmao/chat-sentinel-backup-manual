@@ -543,6 +543,7 @@ async function refreshList(showToast = true) {
 function bindSettingsUi() {
     const currentSettings = settings();
     $('#chat_sentinel_enabled').prop('checked', currentSettings.enabled);
+    $('#chat_sentinel_save_native').prop('checked', currentSettings.saveNativeFirst);
     $('#chat_sentinel_interval').val(currentSettings.intervalSeconds);
     $('#chat_sentinel_keep').val(currentSettings.keepPerChat);
     setStatus(lastStatus);
@@ -551,6 +552,12 @@ function bindSettingsUi() {
         currentSettings.enabled = Boolean($(this).prop('checked'));
         saveSettingsDebounced();
         setStatus(currentSettings.enabled ? '守护备份已启用。' : '守护备份已暂停。');
+    });
+
+    $(document).on('change', '#chat_sentinel_save_native', function () {
+        currentSettings.saveNativeFirst = Boolean($(this).prop('checked'));
+        saveSettingsDebounced();
+        setStatus(currentSettings.saveNativeFirst ? '备份前会先保存当前聊天。' : '已关闭备份前原生保存。');
     });
 
     $(document).on('change', '#chat_sentinel_interval', function () {

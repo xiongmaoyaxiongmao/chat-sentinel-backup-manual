@@ -4,20 +4,34 @@
         <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
     </div>
     <div class="inline-drawer-content">
-        <div class="chat_sentinel_controls">
-            <div class="chat_sentinel_options">
-                <label class="checkbox_label chat_sentinel_toggle" title="开启后，消息变化会自动写入专用文件级快照。">
+        <div class="chat_sentinel_section">
+            <div class="chat_sentinel_heading">
+                <span class="fa-solid fa-comments"></span>
+                <b>自动守护</b>
+            </div>
+            <div class="chat_sentinel_rows">
+                <label class="checkbox_label chat_sentinel_row" title="开启后，消息变化会自动写入专用文件级快照。">
                     <input id="chat_sentinel_enabled" type="checkbox">
                     <span>启用守护备份</span>
                 </label>
-                <label class="chat_sentinel_field" title="同一个聊天的自动备份最短间隔，避免频繁写盘。">
+                <label class="checkbox_label chat_sentinel_row" title="备份前先请求 SillyTavern 原生保存当前聊天。">
+                    <input id="chat_sentinel_save_native" type="checkbox">
+                    <span>备份前先保存当前聊天</span>
+                </label>
+                <label class="chat_sentinel_row chat_sentinel_field" title="同一个聊天的自动备份最短间隔，避免频繁写盘。">
                     <span>间隔秒数</span>
                     <input id="chat_sentinel_interval" type="number" min="5" max="300" step="1">
                 </label>
-                <label class="chat_sentinel_field" title="每个聊天保留多少份独立快照。">
+                <label class="chat_sentinel_row chat_sentinel_field" title="每个聊天保留多少份独立快照。被标记 KEEP 的版本不会被自动清理。">
                     <span>每聊保留</span>
                     <input id="chat_sentinel_keep" type="number" min="5" max="500" step="1">
                 </label>
+            </div>
+        </div>
+        <div class="chat_sentinel_section">
+            <div class="chat_sentinel_heading">
+                <span class="fa-solid fa-box-archive"></span>
+                <b>备份操作</b>
             </div>
             <div class="chat_sentinel_actions">
                 <button id="chat_sentinel_backup_now" class="menu_button chat_sentinel_primary">立即备份</button>

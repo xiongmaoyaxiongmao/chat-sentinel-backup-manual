@@ -18,20 +18,24 @@ echo "正在拉取 GitHub 更新..."
 git pull --ff-only
 
 echo
-echo "正在检查安装链接..."
-if [ ! -L "$ST/plugins/chat-sentinel-backup" ]; then
-  echo "服务端插件不是软链接，请检查：$ST/plugins/chat-sentinel-backup"
-  exit 1
+echo "正在修复安装链接..."
+PLUGIN_LINK="$ST/plugins/chat-sentinel-backup"
+EXT_LINK="$ST/data/default-user/extensions/chat-sentinel-backup"
+
+if [ -e "$PLUGIN_LINK" ] && [ ! -L "$PLUGIN_LINK" ]; then
+  mv "$PLUGIN_LINK" "$PLUGIN_LINK.bak-$(date +%Y%m%d-%H%M%S)"
 fi
 
-if [ ! -L "$ST/data/default-user/extensions/chat-sentinel-backup" ]; then
-  echo "前端扩展不是软链接，请检查：$ST/data/default-user/extensions/chat-sentinel-backup"
-  exit 1
+if [ -e "$EXT_LINK" ] && [ ! -L "$EXT_LINK" ]; then
+  mv "$EXT_LINK" "$EXT_LINK.bak-$(date +%Y%m%d-%H%M%S)"
 fi
+
+ln -sfn "$REPO/plugins/chat-sentinel-backup" "$PLUGIN_LINK"
+ln -sfn "$REPO/extensions/chat-sentinel-backup" "$EXT_LINK"
 
 echo "正在检查脚本语法..."
-node --check "$ST/plugins/chat-sentinel-backup/index.cjs"
-node --check "$ST/data/default-user/extensions/chat-sentinel-backup/index.js"
+node --check "$PLUGIN_LINK/index.cjs"
+node --check "$EXT_LINK/index.js"
 
 echo
 echo "更新完成。"
