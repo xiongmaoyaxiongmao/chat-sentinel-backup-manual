@@ -11,9 +11,15 @@ const info = {
 };
 
 const SNAPSHOT_DIR = 'sentinel-chat';
+const STATE_FILE = '.sentinel-chat-state.json';
 const DEFAULT_KEEP_PER_CHAT = 80;
 const MAX_KEEP_PER_CHAT = 500;
 const KEEP_MARK = '_KEEP_';
+const STABLE_READ_ATTEMPTS = 5;
+const STABLE_READ_DELAY_MS = 150;
+const REGRESSION_MIN_BASELINE = 20;
+const REGRESSION_MIN_DROP = 20;
+const REGRESSION_MAX_RATIO = 0.25;
 const lastContentHashByKey = new Map();
 
 function nowStamp() {
@@ -62,14 +68,6 @@ function contentHashFor(jsonl) {
     return crypto.createHash('sha256').update(jsonl).digest('hex');
 }
 
-function toJsonl(chat) {
-    if (!Array.isArray(chat)) {
-        throw new Error('chat must be an array');
-    }
-
-    return chat.map((line) => JSON.stringify(line)).join('\n');
-}
-
 function getSnapshotDirectory(request) {
     const backupsDir = request.user?.directories?.backups;
     if (!backupsDir) {
@@ -91,10 +89,10 @@ function getMessageCount(jsonl) {
     return Math.max(0, jsonl.split('\n').filter((line) => line.trim()).length - 1);
 }
 
-function writeSnapshot(snapshotDir, body, jsonl, keyHash) {
+function writeSnapshot(snapshotDir, body, jsonl, keyHash, knownMessageCount = null) {
     const kind = body.isGroup ? 'group' : 'char';
     const label = cleanLabel(`${body.entityName || kind}_${body.chatId || 'current'}`);
-    const messageCount = getMessageCount(jsonl);
+    const messageCount = Number.isInteger(knownMessageCount) ? knownMessageCount : getMessageCount(jsonl);
     const fileName = `${nowStamp()}_${kind}_${label}_${keyHash}_m${messageCount}.jsonl`;
     const filePath = path.join(snapshotDir, fileName);
     const tempPath = `${filePath}.tmp`;
@@ -118,6 +116,11 @@ function snapshotMessageCountFromName(name) {
     return match ? Number(match[1]) : null;
 }
 
+function snapshotKeyHashFromName(name) {
+    const match = String(name || '').match(/_([a-f0-9]{16})(?:_KEEP)?_m\d+\.jsonl$/);
+    return match ? match[1] : '';
+}
+
 function snapshotSummary(filePath) {
     const stat = fs.statSync(filePath);
     const name = path.basename(filePath);
@@ -128,6 +131,74 @@ function snapshotSummary(filePath) {
         messageCount: snapshotMessageCountFromName(name),
         kept: isKeptSnapshot(name),
     };
+}
+
+function statePath(snapshotDir) {
+    return path.join(snapshotDir, STATE_FILE);
+}
+
+function emptyState() {
+    return {
+        version: 1,
+        deleted: {},
+    };
+}
+
+function readState(snapshotDir) {
+    const filePath = statePath(snapshotDir);
+    if (!fs.existsSync(filePath)) {
+        return emptyState();
+    }
+
+    try {
+        const state = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        return {
+            version: 1,
+            deleted: state && typeof state.deleted === 'object' && state.deleted ? state.deleted : {},
+        };
+    } catch (error) {
+        console.warn('[chat-sentinel-backup] failed to read state file:', error.message);
+        return emptyState();
+    }
+}
+
+function writeState(snapshotDir, state) {
+    const filePath = statePath(snapshotDir);
+    const tempPath = `${filePath}.tmp`;
+    fs.writeFileSync(tempPath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+    fs.renameSync(tempPath, filePath);
+}
+
+function clearDeletedKey(snapshotDir, keyHash) {
+    const state = readState(snapshotDir);
+    if (!state.deleted[keyHash]) {
+        return false;
+    }
+
+    delete state.deleted[keyHash];
+    writeState(snapshotDir, state);
+    return true;
+}
+
+function markDeleted(snapshotDir, body) {
+    const keyHash = keyHashFor(body);
+    const state = readState(snapshotDir);
+    const existing = state.deleted[keyHash] || {};
+    state.deleted[keyHash] = {
+        ...existing,
+        keyHash,
+        isGroup: Boolean(body.isGroup),
+        entityId: String(body.entityId || ''),
+        entityName: String(body.entityName || ''),
+        chatId: String(body.chatId || ''),
+        deletedAt: new Date().toISOString(),
+    };
+    writeState(snapshotDir, state);
+    return state.deleted[keyHash];
+}
+
+function deletedKeys(snapshotDir) {
+    return new Set(Object.keys(readState(snapshotDir).deleted));
 }
 
 function snapshotsForKey(snapshotDir, keyHash, limit = 100) {
@@ -235,6 +306,7 @@ function snapshotFiles(snapshotDir, body, chatFiles) {
             };
             const keyHash = keyHashForSource(body, sourceFile);
             const written = writeSnapshot(snapshotDir, sourceBody, jsonl, keyHash);
+            clearDeletedKey(snapshotDir, keyHash);
             trimOldSnapshots(snapshotDir, keyHash, body.keepPerChat);
 
             results.push({
@@ -351,6 +423,98 @@ function getActiveChatFilePath(request, body) {
     return targetPath;
 }
 
+function sleep(milliseconds) {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function readStableChatFile(filePath) {
+    if (!fs.existsSync(filePath)) {
+        throw new Error('当前聊天尚未保存到服务器。');
+    }
+
+    for (let attempt = 0; attempt < STABLE_READ_ATTEMPTS; attempt += 1) {
+        const before = await fs.promises.stat(filePath);
+        const jsonl = await fs.promises.readFile(filePath, 'utf8');
+        const after = await fs.promises.stat(filePath);
+
+        if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) {
+            await sleep(STABLE_READ_DELAY_MS);
+            continue;
+        }
+
+        const lines = jsonl.split('\n').filter((line) => line.trim());
+        if (lines.length < 2) {
+            throw new Error('当前聊天文件没有可备份的消息。');
+        }
+
+        try {
+            JSON.parse(lines[0]);
+            JSON.parse(lines[lines.length - 1]);
+        } catch {
+            throw new Error('当前聊天文件尚未完整写入，请稍后重试。');
+        }
+
+        return {
+            jsonl,
+            messageCount: lines.length - 1,
+            size: after.size,
+            mtimeMs: after.mtimeMs,
+        };
+    }
+
+    throw new Error('当前聊天文件仍在写入，请稍后重试。');
+}
+
+function highestSnapshotMessageCount(snapshotDir, keyHash) {
+    if (!fs.existsSync(snapshotDir)) {
+        return 0;
+    }
+
+    return fs.readdirSync(snapshotDir)
+        .filter((name) => name.endsWith('.jsonl') && name.includes(`_${keyHash}_`))
+        .map((name) => snapshotMessageCountFromName(name))
+        .filter(Number.isInteger)
+        .reduce((highest, count) => Math.max(highest, count), 0);
+}
+
+function isSuspiciousMessageRegression(currentCount, baselineCount) {
+    return baselineCount >= REGRESSION_MIN_BASELINE
+        && baselineCount - currentCount >= REGRESSION_MIN_DROP
+        && currentCount <= Math.floor(baselineCount * REGRESSION_MAX_RATIO);
+}
+
+function registerRestoredGroupChat(request, body) {
+    if (!body.isGroup) {
+        return;
+    }
+
+    const groupId = String(body.entityId || '');
+    const chatId = String(body.chatId || '');
+    if (!groupId || !chatId) {
+        return;
+    }
+
+    const groupPath = path.join(request.user.directories.groups, sanitize(`${groupId}.json`));
+    if (!isPathInside(request.user.directories.groups, groupPath) || !fs.existsSync(groupPath)) {
+        return;
+    }
+
+    const groupData = JSON.parse(fs.readFileSync(groupPath, 'utf8'));
+    if (!Array.isArray(groupData.chats)) {
+        groupData.chats = [];
+    }
+    if (!groupData.chats.includes(chatId)) {
+        groupData.chats.push(chatId);
+    }
+    if (!groupData.chat_id) {
+        groupData.chat_id = chatId;
+    }
+
+    const tempPath = `${groupPath}.sentinel-restore-${Date.now()}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(groupData, null, 4), 'utf8');
+    fs.renameSync(tempPath, groupPath);
+}
+
 function trimOldSnapshots(snapshotDir, keyHash, keepPerChat) {
     const limit = Math.max(1, Math.min(Number(keepPerChat) || DEFAULT_KEEP_PER_CHAT, MAX_KEEP_PER_CHAT));
     const files = fs.readdirSync(snapshotDir)
@@ -367,13 +531,14 @@ function trimOldSnapshots(snapshotDir, keyHash, keepPerChat) {
     }
 }
 
-function latestSnapshots(snapshotDir, limit = 20) {
+function latestSnapshots(snapshotDir, limit = 20, includeDeleted = false) {
     if (!fs.existsSync(snapshotDir)) {
         return [];
     }
 
+    const hiddenKeys = includeDeleted ? new Set() : deletedKeys(snapshotDir);
     return fs.readdirSync(snapshotDir)
-        .filter((name) => name.endsWith('.jsonl'))
+        .filter((name) => name.endsWith('.jsonl') && !hiddenKeys.has(snapshotKeyHashFromName(name)))
         .map((name) => {
             const filePath = path.join(snapshotDir, name);
             const stat = fs.statSync(filePath);
@@ -387,6 +552,101 @@ function latestSnapshots(snapshotDir, limit = 20) {
         })
         .sort((a, b) => b.mtimeMs - a.mtimeMs)
         .slice(0, Math.max(1, Math.min(Number(limit) || 20, 100)));
+}
+
+function deletedSnapshotGroups(snapshotDir, limit = 100) {
+    if (!fs.existsSync(snapshotDir)) {
+        return [];
+    }
+
+    const state = readState(snapshotDir);
+    return Object.values(state.deleted)
+        .map((record) => {
+            const snapshots = snapshotsForKey(snapshotDir, record.keyHash, 500);
+            if (snapshots.length === 0) {
+                return null;
+            }
+
+            return {
+                ...record,
+                snapshotCount: snapshots.length,
+                latest: snapshots[0],
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (b.latest?.mtimeMs || 0) - (a.latest?.mtimeMs || 0))
+        .slice(0, Math.max(1, Math.min(Number(limit) || 100, 500)));
+}
+
+function deleteDeletedSnapshotGroups(snapshotDir, keyHashes) {
+    const selected = new Set((Array.isArray(keyHashes) ? keyHashes : []).map((keyHash) => String(keyHash || '')));
+    const state = readState(snapshotDir);
+    let deletedFiles = 0;
+    let deletedChats = 0;
+
+    for (const keyHash of selected) {
+        if (!/^[a-f0-9]{16}$/.test(keyHash) || !state.deleted[keyHash]) {
+            continue;
+        }
+
+        while (true) {
+            const snapshots = snapshotsForKey(snapshotDir, keyHash, 500);
+            if (snapshots.length === 0) {
+                break;
+            }
+
+            for (const snapshot of snapshots) {
+                try {
+                    fs.unlinkSync(snapshotPathForKey(snapshotDir, keyHash, snapshot.name));
+                    deletedFiles += 1;
+                } catch (error) {
+                    console.warn('[chat-sentinel-backup] skipped deleted snapshot purge:', snapshot.name, error.message);
+                }
+            }
+        }
+
+        delete state.deleted[keyHash];
+        deletedChats += 1;
+    }
+
+    writeState(snapshotDir, state);
+    return { deletedChats, deletedFiles };
+}
+
+function restoreDeletedSnapshotGroup(request, snapshotDir, keyHash) {
+    if (!/^[a-f0-9]{16}$/.test(keyHash)) {
+        throw new Error('deleted chat key is invalid');
+    }
+
+    const state = readState(snapshotDir);
+    const record = state.deleted[keyHash];
+    if (!record) {
+        throw new Error('deleted chat was not found');
+    }
+
+    const snapshots = snapshotsForKey(snapshotDir, keyHash, 1);
+    if (snapshots.length === 0) {
+        delete state.deleted[keyHash];
+        writeState(snapshotDir, state);
+        throw new Error('deleted chat has no snapshots left');
+    }
+
+    const sourcePath = snapshotPathForKey(snapshotDir, keyHash, snapshots[0].name);
+    const targetPath = getActiveChatFilePath(request, record);
+    const tempPath = `${targetPath}.sentinel-restore-${Date.now()}.tmp`;
+
+    fs.copyFileSync(sourcePath, tempPath);
+    fs.renameSync(tempPath, targetPath);
+    registerRestoredGroupChat(request, record);
+
+    delete state.deleted[keyHash];
+    writeState(snapshotDir, state);
+
+    return {
+        restored: path.basename(sourcePath),
+        target: path.basename(targetPath),
+        chatId: record.chatId,
+    };
 }
 
 function readJsonlObjects(filePath) {
@@ -416,21 +676,29 @@ function previewSnapshot(filePath, rounds = 2) {
 }
 
 async function init(router) {
-    router.post('/snapshot', (request, response) => {
+    router.post('/snapshot', async (request, response) => {
         try {
             const body = request.body || {};
-            const chat = body.chat;
-
-            if (!Array.isArray(chat) || chat.length < 2) {
-                return response.status(400).json({ ok: false, error: 'refusing to snapshot an empty chat' });
-            }
-
-            const jsonl = toJsonl(chat);
+            const sourcePath = getActiveChatFilePath(request, body);
+            const source = await readStableChatFile(sourcePath);
             const snapshotDir = getSnapshotDirectory(request);
             const keyHash = keyHashFor(body);
-            const contentHash = contentHashFor(jsonl);
+            const baselineMessageCount = highestSnapshotMessageCount(snapshotDir, keyHash);
+
+            if (isSuspiciousMessageRegression(source.messageCount, baselineMessageCount)) {
+                return response.status(409).json({
+                    ok: false,
+                    code: 'message_count_regression',
+                    error: `检测到当前聊天从 ${baselineMessageCount} 条骤降到 ${source.messageCount} 条，已拒绝写入可疑快照。`,
+                    currentMessageCount: source.messageCount,
+                    baselineMessageCount,
+                });
+            }
+
+            const contentHash = contentHashFor(source.jsonl);
 
             if (lastContentHashByKey.get(keyHash) === contentHash) {
+                clearDeletedKey(snapshotDir, keyHash);
                 return response.json({
                     ok: true,
                     skipped: true,
@@ -440,7 +708,8 @@ async function init(router) {
                 });
             }
 
-            const written = writeSnapshot(snapshotDir, body, jsonl, keyHash);
+            const written = writeSnapshot(snapshotDir, body, source.jsonl, keyHash, source.messageCount);
+            clearDeletedKey(snapshotDir, keyHash);
             lastContentHashByKey.set(keyHash, contentHash);
             trimOldSnapshots(snapshotDir, keyHash, body.keepPerChat);
 
@@ -450,6 +719,7 @@ async function init(router) {
                 file: written.file,
                 keyHash,
                 directory: snapshotDir,
+                source: path.basename(sourcePath),
                 messageCount: written.messageCount,
                 bytes: written.bytes,
             });
@@ -610,6 +880,7 @@ async function init(router) {
 
             fs.copyFileSync(sourcePath, tempPath);
             fs.renameSync(tempPath, targetPath);
+            clearDeletedKey(snapshotDir, keyHash);
 
             return response.json({
                 ok: true,
@@ -622,13 +893,82 @@ async function init(router) {
         }
     });
 
+    router.post('/deleted/mark', (request, response) => {
+        try {
+            const body = request.body || {};
+            if (!body.chatId) {
+                return response.status(400).json({ ok: false, error: 'deleted chat id is required' });
+            }
+
+            const snapshotDir = getSnapshotDirectory(request);
+            const record = markDeleted(snapshotDir, body);
+            return response.json({
+                ok: true,
+                directory: snapshotDir,
+                deleted: record,
+            });
+        } catch (error) {
+            console.error('[chat-sentinel-backup] deleted mark failed:', error);
+            return response.status(500).json({ ok: false, error: error.message });
+        }
+    });
+
+    router.post('/deleted/list', (request, response) => {
+        try {
+            const snapshotDir = getSnapshotDirectory(request);
+            const chats = deletedSnapshotGroups(snapshotDir, request.body?.limit);
+            return response.json({
+                ok: true,
+                directory: snapshotDir,
+                total: chats.length,
+                chats,
+            });
+        } catch (error) {
+            console.error('[chat-sentinel-backup] deleted list failed:', error);
+            return response.status(500).json({ ok: false, error: error.message });
+        }
+    });
+
+    router.post('/deleted/restore', (request, response) => {
+        try {
+            const body = request.body || {};
+            const snapshotDir = getSnapshotDirectory(request);
+            const restored = restoreDeletedSnapshotGroup(request, snapshotDir, String(body.keyHash || ''));
+            return response.json({
+                ok: true,
+                ...restored,
+                chats: deletedSnapshotGroups(snapshotDir, request.body?.limit),
+            });
+        } catch (error) {
+            console.error('[chat-sentinel-backup] deleted restore failed:', error);
+            return response.status(500).json({ ok: false, error: error.message });
+        }
+    });
+
+    router.post('/deleted/purge', (request, response) => {
+        try {
+            const body = request.body || {};
+            const snapshotDir = getSnapshotDirectory(request);
+            const result = deleteDeletedSnapshotGroups(snapshotDir, body.selected);
+            return response.json({
+                ok: true,
+                directory: snapshotDir,
+                ...result,
+                chats: deletedSnapshotGroups(snapshotDir, request.body?.limit),
+            });
+        } catch (error) {
+            console.error('[chat-sentinel-backup] deleted purge failed:', error);
+            return response.status(500).json({ ok: false, error: error.message });
+        }
+    });
+
     router.post('/list', (request, response) => {
         try {
             const snapshotDir = getSnapshotDirectory(request);
             return response.json({
                 ok: true,
                 directory: snapshotDir,
-                snapshots: latestSnapshots(snapshotDir, request.body?.limit),
+                snapshots: latestSnapshots(snapshotDir, request.body?.limit, Boolean(request.body?.includeDeleted)),
             });
         } catch (error) {
             console.error('[chat-sentinel-backup] list failed:', error);

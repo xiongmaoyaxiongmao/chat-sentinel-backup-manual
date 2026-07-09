@@ -120,7 +120,8 @@
 }
 
 .chat_sentinel_pick_checkbox,
-.chat_sentinel_version_checkbox {
+.chat_sentinel_version_checkbox,
+.chat_sentinel_deleted_checkbox {
     margin: 0;
 }
 

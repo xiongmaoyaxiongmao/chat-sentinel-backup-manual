@@ -40,12 +40,15 @@ Restart SillyTavern after installing or updating the plugin.
 
 ## What It Does
 
-- Automatically snapshots the current chat after chat changes.
+- Automatically snapshots the current server-side chat file after chat changes.
+- Never calls SillyTavern's native save routine or uploads the full chat from the browser.
+- Rejects suspicious snapshots when a chat suddenly drops far below its protected message count.
 - Saves independent JSONL snapshots under `data/default-user/backups/sentinel-chat`.
 - Supports manual snapshot of the current chat.
 - Supports backing up all chats under the current character or group.
 - Supports selecting specific chat files to back up.
 - Supports marking selected snapshots as `KEEP` so automatic cleanup will not remove them.
+- Hides snapshots for chats you delete in SillyTavern and exposes them under a separate deleted-chat recovery view.
 
 ## Manual
 

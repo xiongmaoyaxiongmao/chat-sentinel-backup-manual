@@ -14,10 +14,6 @@
                     <input id="chat_sentinel_enabled" type="checkbox">
                     <span>启用守护备份</span>
                 </label>
-                <label class="checkbox_label chat_sentinel_row" title="备份前先请求 SillyTavern 原生保存当前聊天。">
-                    <input id="chat_sentinel_save_native" type="checkbox">
-                    <span>备份前先保存当前聊天</span>
-                </label>
                 <label class="chat_sentinel_row chat_sentinel_field" title="同一个聊天的自动备份最短间隔，避免频繁写盘。">
                     <span>间隔秒数</span>
                     <input id="chat_sentinel_interval" type="number" min="5" max="300" step="1">
@@ -38,6 +34,7 @@
                 <button id="chat_sentinel_versions_open" class="menu_button">管理版本</button>
                 <button id="chat_sentinel_backup_all" class="menu_button" title="把当前角色卡或群聊名下的所有聊天文件都写入守护快照。">整卡备份</button>
                 <button id="chat_sentinel_choose" class="menu_button">选择聊天</button>
+                <button id="chat_sentinel_deleted_open" class="menu_button">已删除快照</button>
                 <button id="chat_sentinel_refresh" class="menu_button">刷新</button>
             </div>
         </div>
@@ -57,6 +54,18 @@
             </div>
             <div id="chat_sentinel_versions_list" class="chat_sentinel_picker_list">尚未加载。</div>
             <div id="chat_sentinel_version_preview" class="chat_sentinel_preview" hidden></div>
+        </div>
+        <div id="chat_sentinel_deleted" class="chat_sentinel_picker" hidden>
+            <div class="chat_sentinel_picker_bar">
+                <b>已删除聊天快照</b>
+                <div class="chat_sentinel_picker_actions">
+                    <button id="chat_sentinel_deleted_all" class="menu_button">全选</button>
+                    <button id="chat_sentinel_deleted_none" class="menu_button">清空</button>
+                    <button id="chat_sentinel_deleted_restore" class="menu_button">恢复最新</button>
+                    <button id="chat_sentinel_deleted_purge" class="menu_button chat_sentinel_danger">永久删除</button>
+                </div>
+            </div>
+            <div id="chat_sentinel_deleted_list" class="chat_sentinel_picker_list">尚未加载。</div>
         </div>
         <div id="chat_sentinel_picker" class="chat_sentinel_picker" hidden>
             <div class="chat_sentinel_picker_bar">

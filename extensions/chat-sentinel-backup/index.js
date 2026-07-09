@@ -1,14 +1,10 @@
 import {
-    chat,
-    chat_metadata,
     characters,
     eventSource,
     event_types,
     getCurrentChatId,
     getRequestHeaders,
-    name1,
     name2,
-    saveChatConditional,
     saveSettingsDebounced,
     this_chid,
 } from '../../../../script.js';
@@ -31,7 +27,6 @@ const DEFAULT_SETTINGS = {
     enabled: true,
     intervalSeconds: 20,
     keepPerChat: 80,
-    saveNativeFirst: true,
 };
 
 let initialized = false;
@@ -41,6 +36,7 @@ let lastSnapshotAt = 0;
 let lastStatus = '等待第一次备份。';
 let pickerLoadedFor = '';
 let versionsLoadedFor = '';
+let deletedLoaded = false;
 
 function settings() {
     if (!extension_settings[MODULE_NAME]) {
@@ -51,7 +47,6 @@ function settings() {
     current.enabled = current.enabled ?? DEFAULT_SETTINGS.enabled;
     current.intervalSeconds = clampNumber(current.intervalSeconds, 5, 300, DEFAULT_SETTINGS.intervalSeconds);
     current.keepPerChat = clampNumber(current.keepPerChat, 5, 500, DEFAULT_SETTINGS.keepPerChat);
-    current.saveNativeFirst = current.saveNativeFirst ?? DEFAULT_SETTINGS.saveNativeFirst;
     return current;
 }
 
@@ -64,13 +59,15 @@ function clampNumber(value, min, max, fallback) {
 }
 
 function currentEntity() {
+    const activeChatId = getCurrentChatId();
+
     if (selected_group) {
         const group = groups.find((item) => item.id === selected_group);
         return {
             isGroup: true,
             entityId: selected_group,
             entityName: group?.name || 'group',
-            chatId: group?.chat_id || getCurrentChatId(),
+            chatId: activeChatId || group?.chat_id,
             groupChatIds: Array.isArray(group?.chats) ? [...group.chats] : [],
         };
     }
@@ -80,7 +77,7 @@ function currentEntity() {
         isGroup: false,
         entityId: character?.avatar || '',
         entityName: character?.name || name2 || 'character',
-        chatId: character?.chat || getCurrentChatId(),
+        chatId: activeChatId || character?.chat,
     };
 }
 
@@ -102,22 +99,11 @@ function buildSnapshotPayload(reason) {
         throw new Error('当前没有可备份的聊天文件。');
     }
 
-    if (!Array.isArray(chat) || chat.length === 0) {
-        throw new Error('当前聊天为空，已拒绝写入空备份。');
-    }
-
-    const header = {
-        chat_metadata: { ...chat_metadata },
-        user_name: name1 || 'unused',
-        character_name: entity.entityName || 'unused',
-    };
-
     return {
         ...entity,
         chatId,
         reason,
         keepPerChat: settings().keepPerChat,
-        chat: [header, ...chat.map((message) => structuredClone(message))],
     };
 }
 
@@ -133,7 +119,10 @@ async function postJson(path, body) {
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok || data?.ok === false) {
-        throw new Error(data?.error || response.statusText || '请求失败');
+        const error = new Error(data?.error || response.statusText || '请求失败');
+        error.code = data?.code || '';
+        error.details = data;
+        throw error;
     }
 
     return data;
@@ -161,10 +150,6 @@ async function runSnapshot(reason = 'manual') {
 
     saving = true;
     try {
-        if (currentSettings.saveNativeFirst) {
-            await saveChatConditional();
-        }
-
         const payload = buildSnapshotPayload(reason);
         const result = await postJson('/snapshot', payload);
         lastSnapshotAt = Date.now();
@@ -196,10 +181,6 @@ async function runEntitySnapshot() {
 
     saving = true;
     try {
-        if (currentSettings.saveNativeFirst) {
-            await saveChatConditional();
-        }
-
         const payload = {
             ...requireDirectoryEntity(),
             reason: 'manual-all',
@@ -518,6 +499,135 @@ async function restoreSelectedVersion() {
     }
 }
 
+function deletedChatTitle(item) {
+    const name = item.entityName || (item.isGroup ? '群聊' : '角色');
+    const chatId = item.chatId || 'unknown';
+    return `${name} / ${chatId}`;
+}
+
+function renderDeletedChats(chats) {
+    const list = document.getElementById('chat_sentinel_deleted_list');
+    if (!list) {
+        return;
+    }
+
+    list.innerHTML = '';
+    if (!chats?.length) {
+        setEmptyText(list, '没有已删除聊天的守护快照。');
+        return;
+    }
+
+    for (const item of chats) {
+        const label = document.createElement('label');
+        label.className = 'chat_sentinel_pick_item chat_sentinel_deleted_item';
+        label.title = deletedChatTitle(item);
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'chat_sentinel_deleted_checkbox';
+        checkbox.value = item.keyHash;
+
+        const text = document.createElement('span');
+        text.className = 'chat_sentinel_pick_name';
+        text.textContent = deletedChatTitle(item);
+
+        const meta = document.createElement('span');
+        meta.className = 'chat_sentinel_pick_meta';
+        const latest = item.latest || {};
+        const messageText = latest.messageCount === null || latest.messageCount === undefined ? '' : `${latest.messageCount} 条 · `;
+        const deletedAt = item.deletedAt ? ` · 删除于 ${formatShortTime(Date.parse(item.deletedAt))}` : '';
+        meta.textContent = `${item.snapshotCount || 0} 份 · 最新 ${messageText}${formatBytes(latest.size)} · ${formatShortTime(latest.mtimeMs)}${deletedAt}`;
+
+        label.append(checkbox, text, meta);
+        list.append(label);
+    }
+}
+
+function selectedDeletedKeys() {
+    return Array.from(document.querySelectorAll('.chat_sentinel_deleted_checkbox:checked')).map((item) => item.value);
+}
+
+async function loadDeletedChats(force = false) {
+    const panel = document.getElementById('chat_sentinel_deleted');
+    const list = document.getElementById('chat_sentinel_deleted_list');
+    if (!panel || !list) {
+        return;
+    }
+
+    panel.hidden = false;
+    if (!force && deletedLoaded && list.children.length > 0) {
+        return;
+    }
+
+    try {
+        list.textContent = '正在读取已删除聊天快照...';
+        const result = await postJson('/deleted/list', { limit: 200 });
+        deletedLoaded = true;
+        renderDeletedChats(result.chats);
+        setStatus(`已读取 ${result.total} 个已删除聊天快照组。`);
+    } catch (error) {
+        console.error('[chat-sentinel-backup] deleted list failed:', error);
+        list.textContent = `读取失败：${error.message}`;
+        setStatus(`读取已删除快照失败：${error.message}`, true);
+    }
+}
+
+async function restoreSelectedDeletedChat() {
+    const selected = selectedDeletedKeys();
+    if (selected.length !== 1) {
+        setStatus('恢复已删除聊天时只能勾选一个快照组。', true);
+        toastr.warning('请只勾选一个已删除聊天', '聊天记录守护备份');
+        return;
+    }
+
+    if (!window.confirm('把这个已删除聊天的最新守护快照恢复回原聊天文件？恢复后请刷新或重新打开聊天列表。')) {
+        return;
+    }
+
+    try {
+        const result = await postJson('/deleted/restore', {
+            keyHash: selected[0],
+            limit: 200,
+        });
+        renderDeletedChats(result.chats);
+        setStatus(`已恢复已删除聊天：${result.target}。请刷新或重新打开聊天列表。`);
+        toastr.success('已恢复聊天文件，请刷新或重新打开聊天列表', '聊天记录守护备份');
+        await refreshList(false);
+    } catch (error) {
+        console.error('[chat-sentinel-backup] deleted restore failed:', error);
+        setStatus(`恢复已删除聊天失败：${error.message}`, true);
+        toastr.error(error.message, '聊天记录守护备份');
+    }
+}
+
+async function purgeSelectedDeletedChats() {
+    const selected = selectedDeletedKeys();
+    if (selected.length === 0) {
+        setStatus('还没有勾选要永久删除的快照组。', true);
+        toastr.warning('请先勾选已删除聊天', '聊天记录守护备份');
+        return;
+    }
+
+    if (!window.confirm(`永久删除 ${selected.length} 个已删除聊天的全部守护快照？这个操作不能撤销。`)) {
+        return;
+    }
+
+    try {
+        const result = await postJson('/deleted/purge', {
+            selected,
+            limit: 200,
+        });
+        renderDeletedChats(result.chats);
+        setStatus(`已永久删除 ${result.deletedChats} 个聊天的 ${result.deletedFiles} 个守护快照。`);
+        toastr.success(`已永久删除 ${result.deletedFiles} 个快照`, '聊天记录守护备份');
+        await refreshList(false);
+    } catch (error) {
+        console.error('[chat-sentinel-backup] deleted purge failed:', error);
+        setStatus(`永久删除已删除快照失败：${error.message}`, true);
+        toastr.error(error.message, '聊天记录守护备份');
+    }
+}
+
 function renderPicker(chats) {
     const list = document.getElementById('chat_sentinel_picker_list');
     if (!list) {
@@ -597,10 +707,6 @@ async function runSelectedSnapshot() {
 
     saving = true;
     try {
-        if (currentSettings.saveNativeFirst) {
-            await saveChatConditional();
-        }
-
         const payload = {
             ...requireDirectoryEntity(),
             reason: 'manual-selected',
@@ -618,6 +724,40 @@ async function runSelectedSnapshot() {
         toastr.error(error.message, '聊天记录守护备份');
     } finally {
         saving = false;
+    }
+}
+
+async function markDeletedChat(chatId, isGroup) {
+    const normalizedChatId = String(chatId || '').replace(/\.jsonl$/i, '');
+    if (!normalizedChatId) {
+        return;
+    }
+
+    try {
+        const entity = currentEntity();
+        const payload = {
+            ...entity,
+            isGroup,
+            chatId: normalizedChatId,
+        };
+
+        if (isGroup) {
+            payload.entityId = selected_group || entity.entityId;
+            payload.entityName = groups.find((item) => item.id === payload.entityId)?.name || entity.entityName || 'group';
+        }
+
+        await postJson('/deleted/mark', payload);
+        deletedLoaded = false;
+        setStatus(`已隐藏已删除聊天的守护快照：${normalizedChatId}。`);
+        await refreshList(false);
+
+        const deletedPanel = document.getElementById('chat_sentinel_deleted');
+        if (deletedPanel && !deletedPanel.hidden) {
+            await loadDeletedChats(true);
+        }
+    } catch (error) {
+        console.error('[chat-sentinel-backup] deleted mark failed:', error);
+        setStatus(`标记已删除聊天失败：${error.message}`, true);
     }
 }
 
@@ -683,7 +823,6 @@ async function refreshList(showToast = true) {
 function bindSettingsUi() {
     const currentSettings = settings();
     $('#chat_sentinel_enabled').prop('checked', currentSettings.enabled);
-    $('#chat_sentinel_save_native').prop('checked', currentSettings.saveNativeFirst);
     $('#chat_sentinel_interval').val(currentSettings.intervalSeconds);
     $('#chat_sentinel_keep').val(currentSettings.keepPerChat);
     setStatus(lastStatus);
@@ -692,12 +831,6 @@ function bindSettingsUi() {
         currentSettings.enabled = Boolean($(this).prop('checked'));
         saveSettingsDebounced();
         setStatus(currentSettings.enabled ? '守护备份已启用。' : '守护备份已暂停。');
-    });
-
-    $(document).on('change', '#chat_sentinel_save_native', function () {
-        currentSettings.saveNativeFirst = Boolean($(this).prop('checked'));
-        saveSettingsDebounced();
-        setStatus(currentSettings.saveNativeFirst ? '备份前会先保存当前聊天。' : '已关闭备份前原生保存。');
     });
 
     $(document).on('change', '#chat_sentinel_interval', function () {
@@ -716,6 +849,7 @@ function bindSettingsUi() {
     $(document).on('click', '#chat_sentinel_backup_all', () => runEntitySnapshot());
     $(document).on('click', '#chat_sentinel_choose', () => loadPicker(true));
     $(document).on('click', '#chat_sentinel_versions_open', () => loadVersions(true));
+    $(document).on('click', '#chat_sentinel_deleted_open', () => loadDeletedChats(true));
     $(document).on('click', '#chat_sentinel_versions_all', () => {
         $('.chat_sentinel_version_checkbox').prop('checked', true);
         clearVersionPreview('已全选。点“查看两轮”会显示第一个已选快照。');
@@ -730,6 +864,10 @@ function bindSettingsUi() {
     $(document).on('click', '#chat_sentinel_versions_unkeep', () => setSelectedVersionsKept(false));
     $(document).on('click', '#chat_sentinel_versions_delete', () => deleteSelectedVersions());
     $(document).on('click', '#chat_sentinel_versions_restore', () => restoreSelectedVersion());
+    $(document).on('click', '#chat_sentinel_deleted_all', () => $('.chat_sentinel_deleted_checkbox').prop('checked', true));
+    $(document).on('click', '#chat_sentinel_deleted_none', () => $('.chat_sentinel_deleted_checkbox').prop('checked', false));
+    $(document).on('click', '#chat_sentinel_deleted_restore', () => restoreSelectedDeletedChat());
+    $(document).on('click', '#chat_sentinel_deleted_purge', () => purgeSelectedDeletedChats());
     $(document).on('click', '#chat_sentinel_select_all', () => $('.chat_sentinel_pick_checkbox').prop('checked', true));
     $(document).on('click', '#chat_sentinel_select_none', () => $('.chat_sentinel_pick_checkbox').prop('checked', false));
     $(document).on('click', '#chat_sentinel_backup_selected', () => runSelectedSnapshot());
@@ -746,8 +884,6 @@ function bindEvents() {
         event_types.MESSAGES_DELETED,
         event_types.MESSAGE_SWIPED,
         event_types.GENERATION_ENDED,
-        event_types.CHAT_CHANGED,
-        event_types.CHARACTER_FIRST_MESSAGE_SELECTED,
         event_types.MESSAGE_REASONING_EDITED,
         event_types.MESSAGE_REASONING_DELETED,
         event_types.MESSAGE_FILE_EMBEDDED,
@@ -757,13 +893,14 @@ function bindEvents() {
         eventSource.on(eventName, () => scheduleSnapshot(eventName));
     }
 
-    window.addEventListener('beforeunload', () => {
-        if (pendingTimer) {
-            clearTimeout(pendingTimer);
-            pendingTimer = null;
-            runSnapshot('beforeunload');
-        }
-    });
+    if (event_types.CHAT_DELETED) {
+        eventSource.on(event_types.CHAT_DELETED, (chatId) => markDeletedChat(chatId, false));
+    }
+
+    if (event_types.GROUP_CHAT_DELETED) {
+        eventSource.on(event_types.GROUP_CHAT_DELETED, (chatId) => markDeletedChat(chatId, true));
+    }
+
 }
 
 async function initialize() {
@@ -779,7 +916,6 @@ async function initialize() {
     bindSettingsUi();
     bindEvents();
     refreshList(false);
-    scheduleSnapshot('startup');
 }
 
 eventSource.on(event_types.APP_READY, initialize);
