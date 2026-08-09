@@ -1,0 +1,14 @@
+{
+  "name": "chat-sentinel-backup-manual",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check-syntax.mjs",
+    "test": "node --test --test-concurrency=1 tests/*.test.*",
+    "test:ui": "node tests/ui-server.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

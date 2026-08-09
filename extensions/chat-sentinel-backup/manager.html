@@ -1,0 +1,203 @@
+<div id="chat_sentinel_manager" class="chat_sentinel_manager" hidden role="dialog" aria-modal="true" aria-labelledby="chat_sentinel_manager_title">
+    <div class="chat_sentinel_shell">
+        <header class="chat_sentinel_topbar">
+            <h2 id="chat_sentinel_manager_title">聊天守护</h2>
+            <button type="button" class="menu_button chat_sentinel_icon_button" data-manager-close aria-label="关闭聊天守护" title="关闭">
+                <span class="fa-solid fa-xmark" aria-hidden="true"></span>
+            </button>
+        </header>
+        <main class="chat_sentinel_content">
+            <section data-page="overview" class="chat_sentinel_page chat_sentinel_overview_page">
+                <div class="chat_sentinel_overview">
+                    <div class="chat_sentinel_overview_intro">
+                        <p class="chat_sentinel_kicker">当前聊天</p>
+                        <h3 data-summary-chat>—</h3>
+                    </div>
+                    <div class="chat_sentinel_overview_status" data-summary-status-row data-tone="normal" role="status" aria-live="polite">
+                        <span class="chat_sentinel_health_dot" aria-hidden="true"></span>
+                        <span data-summary-status>正在检查保护状态…</span>
+                    </div>
+                    <button class="menu_button chat_sentinel_primary chat_sentinel_overview_primary" data-protect-current>
+                        <span class="fa-solid fa-shield" aria-hidden="true"></span>
+                        <span>立即保护当前聊天</span>
+                    </button>
+                    <p class="chat_sentinel_trust_note">只保存在这台 Mac，本地不上传聊天内容。</p>
+
+                    <section class="chat_sentinel_overview_section" aria-labelledby="chat_sentinel_overview_summary_title">
+                        <h3 id="chat_sentinel_overview_summary_title">保护概况</h3>
+                        <dl class="chat_sentinel_health_grid">
+                            <div><dt>自动守护</dt><dd data-summary-enabled>—</dd></div>
+                            <div><dt>最近快照</dt><dd data-summary-latest>—</dd></div>
+                            <div><dt>已有版本</dt><dd data-summary-count>—</dd></div>
+                            <div><dt>本地存储</dt><dd data-summary-health>—</dd></div>
+                        </dl>
+                    </section>
+
+                    <div class="chat_sentinel_overview_links">
+                        <button type="button" class="chat_sentinel_overview_link" data-open-history>
+                            <span>查看备份历史</span>
+                            <span class="fa-solid fa-chevron-right" aria-hidden="true"></span>
+                        </button>
+                        <details class="chat_sentinel_more chat_sentinel_overview_more">
+                            <summary aria-label="更多保护操作">
+                                <span>更多保护操作</span>
+                                <span class="fa-solid fa-chevron-right" aria-hidden="true"></span>
+                            </summary>
+                            <div class="chat_sentinel_more_menu">
+                                <button type="button" data-protect-entity>保护这个角色的全部聊天</button>
+                                <button type="button" data-select-chats>选择要保护的聊天</button>
+                            </div>
+                        </details>
+                    </div>
+                    <div class="chat_sentinel_notice" data-overview-notice role="status" aria-live="polite"></div>
+                </div>
+            </section>
+
+            <section data-page="history" class="chat_sentinel_page" hidden>
+                <div class="chat_sentinel_page_header chat_sentinel_history_header">
+                    <div><h3>备份历史</h3><p>先选聊天，再查看具体版本。</p></div>
+                    <label class="chat_sentinel_search">
+                        <span class="fa-solid fa-magnifying-glass" aria-hidden="true"></span>
+                        <span class="sr-only">搜索聊天</span>
+                        <input type="search" data-history-search placeholder="搜索角色、群聊或聊天">
+                    </label>
+                </div>
+                <div class="chat_sentinel_tabs" role="tablist" aria-label="备份历史分类">
+                    <button role="tab" aria-selected="true" data-history-tab="current">当前聊天</button>
+                    <button role="tab" aria-selected="false" data-history-tab="all">全部聊天</button>
+                    <button role="tab" aria-selected="false" data-history-tab="trash">回收站</button>
+                </div>
+                <div class="chat_sentinel_split" data-history-split>
+                    <div class="chat_sentinel_timeline" data-history-list aria-live="polite"></div>
+                    <aside class="chat_sentinel_detail_panel" data-version-detail-panel aria-label="版本详情">
+                        <button type="button" class="menu_button chat_sentinel_detail_back" data-history-back>
+                            <span class="fa-solid fa-arrow-left" aria-hidden="true"></span>
+                            <span>返回版本列表</span>
+                        </button>
+                        <div class="chat_sentinel_detail" data-version-detail>
+                            <div class="chat_sentinel_empty">选择一个版本查看详情。</div>
+                        </div>
+                    </aside>
+                </div>
+            </section>
+
+            <section data-page="settings" class="chat_sentinel_page" hidden>
+                <div class="chat_sentinel_page_header"><div><h3>设置</h3><p>只保留日常需要理解的选项。</p></div></div>
+                <div class="chat_sentinel_settings_form">
+                    <h4 class="chat_sentinel_settings_group_heading">自动守护</h4>
+                    <div class="chat_sentinel_setting_row">
+                        <div class="chat_sentinel_setting_copy">
+                            <strong>自动守护</strong>
+                            <p id="chat_sentinel_enabled_help">聊天发生变化后，自动创建本地保护版本。</p>
+                        </div>
+                        <div class="chat_sentinel_setting_control">
+                            <label class="chat_sentinel_switch">
+                                <input data-setting-enabled type="checkbox" aria-describedby="chat_sentinel_enabled_help">
+                                <span class="chat_sentinel_switch_track" aria-hidden="true"></span>
+                                <span data-setting-enabled-state>—</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="chat_sentinel_setting_row">
+                        <label class="chat_sentinel_setting_copy" for="chat_sentinel_interval">
+                            <strong>最短间隔</strong>
+                            <span>同一聊天密集变化时的最短等待时间。</span>
+                        </label>
+                        <div class="chat_sentinel_setting_control">
+                            <span class="chat_sentinel_number_field">
+                                <input id="chat_sentinel_interval" data-setting-interval type="number" min="5" max="300">
+                                <span>秒</span>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="chat_sentinel_setting_row">
+                        <label class="chat_sentinel_setting_copy" for="chat_sentinel_keep">
+                            <strong>每聊保留数</strong>
+                            <span>每个聊天保留的普通版本数量；长期保留不受影响。</span>
+                        </label>
+                        <div class="chat_sentinel_setting_control">
+                            <span class="chat_sentinel_number_field">
+                                <input id="chat_sentinel_keep" data-setting-keep type="number" min="5" max="500">
+                                <span>个版本</span>
+                            </span>
+                        </div>
+                    </div>
+                    <h4 class="chat_sentinel_settings_group_heading">存储与安全</h4>
+                    <div class="chat_sentinel_setting_row chat_sentinel_setting_row_wide">
+                        <div class="chat_sentinel_setting_copy">
+                            <strong>存储位置</strong>
+                            <p>快照只保存在这台 Mac 的本地目录。</p>
+                        </div>
+                        <div class="chat_sentinel_setting_control">
+                            <code class="chat_sentinel_storage_path" data-setting-directory>—</code>
+                        </div>
+                    </div>
+                    <div class="chat_sentinel_setting_row chat_sentinel_setting_row_wide chat_sentinel_health_setting" data-storage-health-row>
+                        <div class="chat_sentinel_setting_copy">
+                            <strong>存储健康</strong>
+                            <p>索引、迁移与安全锁的综合状态。</p>
+                        </div>
+                        <div class="chat_sentinel_setting_control">
+                            <div class="chat_sentinel_health_panel" data-storage-health-panel>
+                                <div class="chat_sentinel_health_status">
+                                    <span class="chat_sentinel_health_indicator" aria-hidden="true"></span>
+                                    <strong data-setting-health>—</strong>
+                                </div>
+                                <p id="chat_sentinel_health_detail" data-setting-health-detail>正在检查本地存储。</p>
+                                <button type="button" class="menu_button interactable chat_sentinel_danger chat_sentinel_health_action" data-confirm-repair aria-describedby="chat_sentinel_health_detail" hidden>
+                                    核对后解除清理锁
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chat_sentinel_setting_row">
+                        <div class="chat_sentinel_setting_copy">
+                            <strong>安装版本</strong>
+                            <p>当前加载的 Chat Sentinel 前端版本。</p>
+                        </div>
+                        <div class="chat_sentinel_setting_control">
+                            <strong class="chat_sentinel_version_value" data-setting-version>—</strong>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <nav class="chat_sentinel_nav" aria-label="聊天守护页面">
+            <button type="button" class="chat_sentinel_nav_item is_active" data-view="overview" aria-current="page">
+                <span class="fa-solid fa-shield-halved" aria-hidden="true"></span>
+                <span>守护</span>
+            </button>
+            <button type="button" class="chat_sentinel_nav_item" data-view="history">
+                <span class="fa-solid fa-clock-rotate-left" aria-hidden="true"></span>
+                <span>历史</span>
+            </button>
+            <button type="button" class="chat_sentinel_nav_item" data-view="settings">
+                <span class="fa-solid fa-gear" aria-hidden="true"></span>
+                <span>设置</span>
+            </button>
+        </nav>
+    </div>
+
+    <dialog id="chat_sentinel_dialog" class="chat_sentinel_dialog">
+        <form method="dialog">
+            <h3 data-dialog-title>确认操作</h3>
+            <p data-dialog-body></p>
+            <div class="chat_sentinel_dialog_actions">
+                <button type="button" class="menu_button" data-dialog-cancel>取消</button>
+                <button type="button" class="menu_button chat_sentinel_primary" data-dialog-confirm>确认</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="chat_sentinel_picker_dialog" class="chat_sentinel_dialog chat_sentinel_picker_dialog">
+        <form method="dialog">
+            <h3>选择要保护的聊天</h3>
+            <div data-chat-picker-list class="chat_sentinel_picker_list"></div>
+            <div class="chat_sentinel_dialog_actions">
+                <button type="button" class="menu_button" data-picker-cancel>取消</button>
+                <button type="button" class="menu_button chat_sentinel_primary" data-picker-confirm>保护已选聊天</button>
+            </div>
+        </form>
+    </dialog>
+</div>

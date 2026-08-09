@@ -2,4 +2,4 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
-exec "$SCRIPT_DIR/scripts/update-local-install.command"
+exec "$SCRIPT_DIR/scripts/install-current.command"

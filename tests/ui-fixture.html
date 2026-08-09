@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>聊天守护测试界面</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        :root {
+            --SmartThemeBodyColor: #e8e8ea;
+            --SmartThemeEmColor: #a9abb1;
+            --SmartThemeQuoteColor: #88a9c7;
+            --SmartThemeBorderColor: #45474d;
+            --SmartThemeBlurTintColor: #24262b;
+            --SmartThemeBlurStrength: 12px;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; color: var(--SmartThemeBodyColor); background: #17181b; font-family: system-ui, -apple-system, sans-serif; }
+        button, input { font: inherit; }
+        .menu_button { color: inherit; background: #30333a; border: 1px solid #555861; border-radius: 6px; padding: 7px 11px; }
+        .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+    </style>
+</head>
+<body>
+    <button id="fixture_opener" class="menu_button">打开聊天守护</button>
+    <div id="fixture"></div>
+    <script type="module" src="/ui-fixture.js"></script>
+</body>
+</html>
