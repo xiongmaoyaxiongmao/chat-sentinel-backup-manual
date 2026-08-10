@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "local",
-    "version": "2.0.0",
+    "version": "3.0.0",
     "homePage": "",
-    "description": "可靠的本地聊天快照、版本历史、回收站与安全恢复。"
+    "description": "每个聊天固定保留 10 个循环保护点，可安全恢复。"
 }

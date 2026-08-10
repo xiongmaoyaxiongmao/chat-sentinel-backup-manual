@@ -41,7 +41,7 @@ export function renderOverview(root, { enabled, payload, health }) {
     root.querySelector('[data-summary-status-row]').dataset.tone = status.tone;
     root.querySelector('[data-summary-latest]').textContent = timeText(health?.current?.latest?.createdAt);
     root.querySelector('[data-summary-count]').textContent = health?.current
-        ? `${health.current.versionCount} 个版本`
+        ? `${health.current.versionCount} / 10`
         : '—';
     root.querySelector('[data-summary-health]').textContent = health?.healthy ? '正常' : '需要检查';
 }

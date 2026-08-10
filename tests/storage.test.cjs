@@ -171,35 +171,31 @@ test('合法大幅删改必须人工确认，并保护旧完整版本', async (t
     assert.equal(history.snapshots.find((item) => item.messageCount === 100).kept, true);
 });
 
-test('长期保留、保留清理、回收站放回和永久删除由同一索引解释', async (t) => {
-    const profile = await makeProfile('retention');
+test('每个聊天固定使用十个原子循环槽，并从最早槽开始覆盖', async (t) => {
+    const profile = await makeProfile('rolling-slots');
     t.after(profile.cleanup);
     const inventory = new InventoryOwner();
     const service = new SnapshotService(inventory);
     const key = await register(service, profile);
-    for (let index = 0; index < 7; index += 1) {
+    for (let index = 0; index < 12; index += 1) {
         await writeCharacterChat(profile, 'fixture.png', 'story', jsonl(3, `v${index}`));
-        await service.snapshot(profile.request, opaque(key, { keepPerChat: 5 }));
+        await service.snapshot(profile.request, opaque(key));
     }
-    let current = await service.current(profile.request, opaque(key));
-    assert.equal(current.snapshots.length, 5);
-    const keepName = current.snapshots.at(-1).name;
-    await service.setKept(profile.request, { opaqueKey: key, selected: [keepName] }, true);
-    assert.equal((await service.current(profile.request, opaque(key))).snapshots.find((item) => item.name === keepName).kept, true);
-    await service.setKept(profile.request, { opaqueKey: key, selected: [keepName] }, false);
-    await service.setKept(profile.request, { opaqueKey: key, selected: [keepName] }, true);
-    await service.moveToTrash(profile.request, { opaqueKey: key, selected: [keepName] });
-    assert.equal((await service.trash(profile.request)).snapshots.some((item) => item.name === keepName), true);
-    await service.restoreTrash(profile.request, [keepName]);
-    assert.equal((await service.trash(profile.request)).snapshots.some((item) => item.name === keepName), false);
-    await service.moveToTrash(profile.request, { opaqueKey: key, selected: [keepName] });
-    await service.purgeTrash(profile.request, [keepName]);
-    current = await service.current(profile.request, opaque(key));
-    assert.equal(current.snapshots.some((item) => item.name === keepName), false);
+    const current = await service.current(profile.request, opaque(key));
+    assert.equal(current.snapshots.length, 10);
+    assert.deepEqual([...new Set(current.snapshots.map((item) => item.slot))].sort((a, b) => a - b), Array.from({ length: 10 }, (_, index) => index));
+    const snapshotDir = path.join(profile.directories.backups, 'sentinel-chat');
+    const names = (await fs.promises.readdir(snapshotDir)).filter((name) => name.startsWith(`ring-${key}-`));
+    assert.equal(names.length, 10);
+    const savedTexts = await Promise.all(names.map((name) => fs.promises.readFile(path.join(snapshotDir, name), 'utf8')));
+    assert.equal(savedTexts.some((text) => text.includes('v0-0') || text.includes('v1-0')), false);
+    for (let index = 2; index < 12; index += 1) {
+        assert.equal(savedTexts.some((text) => text.includes(`v${index}-0`)), true);
+    }
 });
 
-test('v2 retention 不自动删除已成功归属的 legacy 快照', async (t) => {
-    const profile = await makeProfile('legacy-retention');
+test('旧快照保持原样，新循环槽不再把它们当作可增长历史', async (t) => {
+    const profile = await makeProfile('legacy-isolation');
     t.after(profile.cleanup);
     const identity = resolveChatIdentity(profile.request, raw());
     const snapshotDir = path.join(profile.directories.backups, 'sentinel-chat');
@@ -221,14 +217,14 @@ test('v2 retention 不自动删除已成功归属的 legacy 快照', async (t) =
     assert.equal(before.snapshots.filter((item) => item.status === 'legacy').length, 5);
     assert.equal(before.snapshots.filter((item) => item.status === 'legacy' && !item.kept).length, 5);
 
-    const firstV2 = await service.snapshot(profile.request, opaque(key, { keepPerChat: 5 }));
+    const firstV2 = await service.snapshot(profile.request, opaque(key));
     const after = await service.current(profile.request, opaque(key));
     for (const name of legacyNames) {
         assert.equal(await fs.promises.stat(path.join(snapshotDir, name)).then(() => true, () => false), true);
     }
-    assert.equal(after.snapshots.filter((item) => item.status === 'legacy').length, 5);
     assert.equal(after.snapshots.filter((item) => item.name === firstV2.file).length, 1);
-    assert.equal(after.snapshots.length, 6);
+    assert.equal(after.snapshots.length, 1);
+    assert.equal(after.snapshots[0].rolling, true);
 });
 
 test('字符、群聊、整卡和选择备份都使用服务端 opaque identity', async (t) => {
@@ -257,7 +253,7 @@ test('字符、群聊、整卡和选择备份都使用服务端 opaque identity'
     assert.equal(groupResult.messageCount, 2);
 });
 
-test('损坏 JSONL 拒绝恢复，成功恢复会创建不可清理保险快照', async (t) => {
+test('损坏 JSONL 拒绝恢复，成功恢复会占用一个循环保护槽', async (t) => {
     const profile = await makeProfile('restore');
     t.after(profile.cleanup);
     const target = await writeCharacterChat(profile, 'fixture.png', 'story', jsonl(4, 'original'));
@@ -272,7 +268,7 @@ test('损坏 JSONL 拒绝恢复，成功恢复会创建不可清理保险快照'
     assert.equal(await fs.promises.readFile(target, 'utf8'), jsonl(4, 'original'));
     const history = await service.current(profile.request, opaque(key));
     const insurance = history.snapshots.find((item) => item.name === restored.preRestoreSnapshot);
-    assert.equal(insurance.kept, true);
+    assert.equal(insurance.rolling, true);
     assert.equal(insurance.status, 'pre-restore');
 
     const snapshotDir = path.join(profile.directories.backups, 'sentinel-chat');

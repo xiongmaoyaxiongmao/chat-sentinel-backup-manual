@@ -3,7 +3,6 @@ export function renderSettings(root, settings, health, version) {
     root.querySelector('[data-setting-enabled]').checked = enabled;
     root.querySelector('[data-setting-enabled-state]').textContent = enabled ? '已开启' : '已关闭';
     root.querySelector('[data-setting-interval]').value = settings.intervalSeconds;
-    root.querySelector('[data-setting-keep]').value = settings.keepPerChat;
 
     const directory = health?.directory || '不可用';
     const directoryElement = root.querySelector('[data-setting-directory]');

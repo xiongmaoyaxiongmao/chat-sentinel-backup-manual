@@ -6,7 +6,7 @@ const {
     userDirectories,
 } = require('./identity.cjs');
 const { validateJsonlText } = require('./jsonl.cjs');
-const { contentHash, snapshotName } = require('./snapshot-service.cjs');
+const { contentHash, managedSnapshot, writeRollingSnapshot } = require('./snapshot-service.cjs');
 
 async function stagedGroupRegistration(request, identity, transaction) {
     if (!identity.isGroup) return null;
@@ -40,7 +40,8 @@ class RecoveryService {
         return this.inventory.mutate(snapshotDir, async (index, transaction) => {
             const identity = this.inventory.resolveCurrentTarget(index, request, body.opaqueKey);
             const sourceName = path.basename(String(body.name || ''));
-            const sourceRecord = index.snapshots[sourceName];
+            const managed = managedSnapshot(index, sourceName);
+            const sourceRecord = managed?.item;
             if (!sourceRecord || sourceRecord.canonicalId !== identity.canonicalId) {
                 throw new Error('快照身份与目标聊天不一致');
             }
@@ -64,25 +65,12 @@ class RecoveryService {
                 } catch {
                     originalCount = 0;
                 }
-                preRestoreName = snapshotName(identity, originalCount, 'pre-restore');
-                await transaction.stageCreate(path.join(snapshotDir, preRestoreName), originalText);
-                const now = Date.now();
-                index.snapshots[preRestoreName] = {
-                    name: preRestoreName,
-                    canonicalId: identity.canonicalId,
-                    kind: identity.kind,
-                    label: identity.entityName,
-                    legacyId: '',
+                const saved = await writeRollingSnapshot(index, transaction, snapshotDir, identity, {
+                    text: originalText,
                     messageCount: originalCount,
                     bytes: Buffer.byteLength(originalText, 'utf8'),
-                    mtimeMs: now,
-                    createdAt: new Date(now).toISOString(),
-                    status: 'pre-restore',
-                    kept: true,
-                    trashedAt: null,
-                    trashReason: null,
-                    contentHash: contentHash(originalText),
-                };
+                }, 'pre-restore');
+                preRestoreName = saved.file;
             }
 
             await fs.promises.mkdir(path.dirname(identity.targetPath), { recursive: true });

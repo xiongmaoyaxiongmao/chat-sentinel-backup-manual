@@ -190,7 +190,6 @@ export function createManager({
             const result = await api.post('/snapshot', {
                 opaqueKey: identity.opaqueKey,
                 reason: 'manual',
-                keepPerChat: getSettings().keepPerChat,
                 confirmRegression,
             });
             notify(result.skipped ? '内容没有变化，现有快照仍然有效。' : `已保护当前聊天：${result.messageCount} 条消息。`, 'success');
@@ -223,7 +222,6 @@ export function createManager({
             const result = await api.post('/snapshot-all', {
                 opaqueKey: identity.opaqueKey,
                 reason: 'manual-all',
-                keepPerChat: getSettings().keepPerChat,
             });
             notify(`完成：保护 ${result.written}/${result.total} 个聊天，跳过 ${result.skipped} 个。`, 'success');
             await refreshHealth();
@@ -273,7 +271,6 @@ export function createManager({
         const result = await api.post('/snapshot-selected', {
             opaqueKey: pickerEntityKey,
             selectedOpaqueKeys: selected,
-            keepPerChat: getSettings().keepPerChat,
         });
         notify(`已保护 ${result.written} 个已选聊天。`, 'success');
         await refreshHealth();
@@ -443,10 +440,6 @@ export function createManager({
     });
     root.querySelector('[data-setting-interval]').addEventListener('change', (event) => {
         updateSettings({ intervalSeconds: event.target.value });
-        renderSettings(root, getSettings(), health, version);
-    });
-    root.querySelector('[data-setting-keep]').addEventListener('change', (event) => {
-        updateSettings({ keepPerChat: event.target.value });
         renderSettings(root, getSettings(), health, version);
     });
     root.querySelector('[data-confirm-repair]').addEventListener('click', async () => {

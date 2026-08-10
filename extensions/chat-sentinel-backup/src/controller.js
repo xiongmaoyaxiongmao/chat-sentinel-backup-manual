@@ -15,11 +15,10 @@ import { createManager } from './manager.js';
 import { PerChatSnapshotScheduler } from './snapshot-scheduler.js';
 
 const MODULE_NAME = 'chat-sentinel-backup';
-const VERSION = '2.0.0';
+const VERSION = '3.0.0';
 const DEFAULT_SETTINGS = {
     enabled: true,
     intervalSeconds: 20,
-    keepPerChat: 80,
 };
 
 function clamp(value, minimum, maximum, fallback) {
@@ -34,14 +33,12 @@ function settings() {
     const value = extension_settings[MODULE_NAME];
     value.enabled = value.enabled ?? true;
     value.intervalSeconds = clamp(value.intervalSeconds, 5, 300, 20);
-    value.keepPerChat = clamp(value.keepPerChat, 5, 500, 80);
     return value;
 }
 
 function updateSettings(change) {
     Object.assign(settings(), change);
     settings().intervalSeconds = clamp(settings().intervalSeconds, 5, 300, 20);
-    settings().keepPerChat = clamp(settings().keepPerChat, 5, 500, 80);
     saveSettingsDebounced();
 }
 
@@ -79,11 +76,10 @@ export async function initializeSentinel() {
         intervalMs: () => settings().intervalSeconds * 1000,
         run: ({ payload }) => api.post('/snapshot', {
             ...payload,
-            keepPerChat: settings().keepPerChat,
         }),
         onResult: (_job, result) => {
-            setEntryStatus(result.skipped ? '自动守护正常，内容没有变化。' : `自动守护正常，最近保护 ${result.messageCount} 条。`);
-            manager.notify(result.skipped ? '内容没有变化，现有快照仍有效。' : `已自动保护 ${result.messageCount} 条消息。`, 'success');
+            setEntryStatus(result.skipped ? '自动守护正常，内容没有变化。' : `自动守护正常，已滚动保护 ${result.messageCount} 条。`);
+            manager.notify(result.skipped ? '内容没有变化，现有保护点仍有效。' : `已更新循环保护点（${result.slot + 1}/10）。`, 'success');
         },
         onError: (_job, error) => {
             if (error.code === 'message_count_regression') {

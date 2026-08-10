@@ -13,8 +13,7 @@ const {
 } = require('./identity.cjs');
 const { validateJsonlText, previewFromText } = require('./jsonl.cjs');
 
-const DEFAULT_KEEP = 80;
-const MAX_KEEP = 500;
+const ROLLING_SLOT_COUNT = 10;
 const REGRESSION_MIN_BASELINE = 20;
 const REGRESSION_MIN_DROP = 20;
 const REGRESSION_MAX_RATIO = 0.25;
@@ -37,6 +36,84 @@ function snapshotName(identity, messageCount, status) {
     const unique = crypto.randomBytes(8).toString('hex');
     return `${compactStamp()}__${identity.kind}__${cleanLabel(identity.entityName)}__c${identity.canonicalId}`
         + `__u${unique}__m${messageCount}__${status}.jsonl`;
+}
+
+function rollingSnapshotName(identity, slot) {
+    return `ring-${identity.canonicalId}-${slot}.jsonl`;
+}
+
+function rollingState(index, canonicalId) {
+    index.rolling ||= { version: 1, chats: {} };
+    index.rolling.chats ||= {};
+    index.rolling.chats[canonicalId] ||= { slots: [] };
+    const state = index.rolling.chats[canonicalId];
+    if (!Array.isArray(state.slots)) state.slots = [];
+    return state;
+}
+
+function rollingSnapshotsFor(index, canonicalId) {
+    return [...(index.rolling?.chats?.[canonicalId]?.slots || [])]
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+function managedSnapshot(index, name) {
+    const safeName = path.basename(String(name || ''));
+    const legacy = index.snapshots[safeName];
+    if (legacy) return { item: legacy, rolling: false };
+    for (const state of Object.values(index.rolling?.chats || {})) {
+        const item = (state.slots || []).find((candidate) => candidate.name === safeName);
+        if (item) return { item, rolling: true };
+    }
+    return null;
+}
+
+function nextRollingSlot(slots) {
+    for (let slot = 0; slot < ROLLING_SLOT_COUNT; slot += 1) {
+        if (!slots.some((item) => item.slot === slot)) return slot;
+    }
+    return slots.reduce((oldest, item) => item.mtimeMs < oldest.mtimeMs ? item : oldest).slot;
+}
+
+async function writeRollingSnapshot(index, transaction, snapshotDir, identity, source, status) {
+    const state = rollingState(index, identity.canonicalId);
+    const hash = contentHash(source.text);
+    const duplicate = state.slots.find((item) => item.contentHash && item.contentHash === hash);
+    if (duplicate) {
+        return { ok: true, skipped: true, reason: 'duplicate', file: duplicate.name, slot: duplicate.slot };
+    }
+
+    const slot = nextRollingSlot(state.slots);
+    const name = rollingSnapshotName(identity, slot);
+    const filePath = path.join(snapshotDir, name);
+    const previous = state.slots.find((item) => item.slot === slot);
+    if (previous) await transaction.stageReplace(filePath, source.text);
+    else await transaction.stageCreate(filePath, source.text);
+
+    const now = Date.now();
+    const record = {
+        name,
+        slot,
+        canonicalId: identity.canonicalId,
+        kind: identity.kind,
+        label: identity.entityName,
+        legacyId: '',
+        messageCount: source.messageCount,
+        bytes: source.bytes,
+        mtimeMs: now,
+        createdAt: new Date(now).toISOString(),
+        status,
+        kept: false,
+        trashedAt: null,
+        trashReason: null,
+        contentHash: hash,
+    };
+    state.slots = state.slots.filter((item) => item.slot !== slot);
+    state.slots.push(record);
+    // Keep the record in the established index map as well.  Existing recovery
+    // and integrity paths continue to operate on one authoritative record;
+    // the rolling state only determines which of the ten fixed files to replace.
+    index.snapshots[name] = record;
+    return { ok: true, skipped: false, file: name, slot, record };
 }
 
 function isSuspicious(current, baseline) {
@@ -89,10 +166,16 @@ function publicSnapshot(item) {
         status: item.status,
         trashedAt: item.trashedAt || null,
         trashReason: item.trashReason || null,
+        rolling: Number.isInteger(item.slot),
+        slot: Number.isInteger(item.slot) ? item.slot : null,
     };
 }
 
 function snapshotsFor(index, canonicalId, includeTrashed = false) {
+    const hasRollingState = Boolean(index.rolling?.chats?.[canonicalId]);
+    const rolling = rollingSnapshotsFor(index, canonicalId)
+        .filter((item) => includeTrashed || !item.trashedAt);
+    if (hasRollingState) return rolling;
     return Object.values(index.snapshots)
         .filter((item) => item.canonicalId === canonicalId)
         .filter((item) => includeTrashed || !item.trashedAt)
@@ -140,13 +223,10 @@ class SnapshotService {
 
     async storeText(request, body, identity, source, status = 'manual') {
         const snapshotDir = snapshotDirectory(request);
-        const keepLimit = Math.max(5, Math.min(Number(body.keepPerChat) || DEFAULT_KEEP, MAX_KEEP));
-        const hash = contentHash(source.text);
         return this.inventory.mutate(snapshotDir, async (index, transaction) => {
             const chat = this.inventory.adoptIdentity(index, identity);
             const adoptedIdentity = { ...identity, canonicalId: chat.canonicalId };
-            const allExisting = snapshotsFor(index, chat.canonicalId, true);
-            const existing = allExisting.filter((item) => !item.trashedAt);
+            const existing = rollingSnapshotsFor(index, chat.canonicalId);
             const baseline = existing.reduce((max, item) => Math.max(max, item.messageCount || 0), 0);
             const suspicious = isSuspicious(source.messageCount, baseline);
 
@@ -158,81 +238,35 @@ class SnapshotService {
                 throw error;
             }
 
-            const duplicate = allExisting.find((item) => item.contentHash && item.contentHash === hash);
-            if (duplicate) {
-                duplicate.trashedAt = null;
-                duplicate.trashReason = null;
-                chat.deletedAt = null;
-                chat.latestContentHash = hash;
-                return {
-                    ok: true,
-                    skipped: true,
-                    reason: 'duplicate',
-                    opaqueKey: chat.canonicalId,
-                    directory: snapshotDir,
-                };
-            }
-
             if (suspicious) {
                 const baselineSnapshot = existing.find((item) => item.messageCount === baseline);
                 if (baselineSnapshot) baselineSnapshot.kept = true;
                 status = 'confirmed';
             }
-
-            const name = snapshotName(adoptedIdentity, source.messageCount, status);
-            await transaction.stageCreate(path.join(snapshotDir, name), source.text);
+            const saved = await writeRollingSnapshot(index, transaction, snapshotDir, adoptedIdentity, source, status);
             const now = Date.now();
-            index.snapshots[name] = {
-                name,
-                canonicalId: chat.canonicalId,
-                kind: adoptedIdentity.kind,
-                label: adoptedIdentity.entityName,
-                legacyId: '',
-                messageCount: source.messageCount,
-                bytes: source.bytes,
-                mtimeMs: now,
-                createdAt: new Date(now).toISOString(),
-                status,
-                kept: status === 'pre-restore',
-                trashedAt: null,
-                trashReason: null,
-                contentHash: hash,
-            };
             Object.assign(chat, {
                 entityName: identity.entityName,
                 chatId: identity.chatId,
                 pathSemantic: identity.pathSemantic,
                 deletedAt: null,
-                latestContentHash: hash,
+                latestContentHash: contentHash(source.text),
                 updatedAt: new Date(now).toISOString(),
             });
 
-            let retentionDeferred = false;
-            if (index.health.destructiveBlocked) {
-                retentionDeferred = true;
-            } else {
-                const removable = snapshotsFor(index, chat.canonicalId)
-                    .filter((item) => item.status !== 'legacy'
-                        && !item.kept
-                        && !item.trashedAt
-                        && item.status !== 'pre-restore');
-                for (const stale of removable.slice(keepLimit)) {
-                    await transaction.stageDelete(path.join(snapshotDir, stale.name));
-                    delete index.snapshots[stale.name];
-                }
-            }
-
             return {
                 ok: true,
-                skipped: false,
-                file: name,
+                skipped: saved.skipped,
+                reason: saved.reason,
+                file: saved.file,
+                slot: saved.slot,
+                capacity: ROLLING_SLOT_COUNT,
                 opaqueKey: chat.canonicalId,
                 directory: snapshotDir,
                 source: path.basename(adoptedIdentity.targetPath),
                 messageCount: source.messageCount,
                 bytes: source.bytes,
                 status,
-                retentionDeferred,
                 regression: suspicious ? {
                     confirmed: true,
                     baselineMessageCount: baseline,
@@ -531,6 +565,10 @@ module.exports = {
     mapLimit,
     publicSnapshot,
     readStableChatFile,
+    ROLLING_SLOT_COUNT,
+    rollingSnapshotsFor,
+    managedSnapshot,
     snapshotName,
     snapshotsFor,
+    writeRollingSnapshot,
 };

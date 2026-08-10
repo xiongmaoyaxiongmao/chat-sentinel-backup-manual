@@ -41,6 +41,8 @@ function normalizeIndex(value) {
     }
     value.quarantine ||= {};
     value.review ||= {};
+    value.rolling ||= { version: 1, chats: {} };
+    value.rolling.chats ||= {};
     value.health = {
         ...emptyHealth(),
         ...(value.health || {}),
@@ -242,6 +244,8 @@ async function inspectDisk(index, snapshotDir, fsApi = fs.promises) {
     const tracked = new Set([
         ...Object.keys(index.snapshots),
         ...Object.values(index.quarantine).map((item) => item.name),
+        ...Object.values(index.rolling?.chats || {}).flatMap((chat) =>
+            (Array.isArray(chat.slots) ? chat.slots : []).map((item) => item.name)),
     ]);
     let changed = false;
 

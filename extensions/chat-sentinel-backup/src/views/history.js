@@ -9,6 +9,7 @@ function formatTime(value) {
 }
 
 function statusText(item) {
+    if (item.rolling) return item.status === 'pre-restore' ? '恢复前保护' : '循环保护';
     if (item.status === 'pre-restore') return '恢复前保险';
     if (item.status === 'confirmed') return '人工确认删改';
     if (item.status === 'legacy') return '旧版快照';
@@ -38,6 +39,12 @@ function snapshotButton(snapshot, previous, chat, onSelect) {
         status.className = 'chat_sentinel_badge is_neutral';
         status.textContent = statusText(snapshot);
         badges.append(status);
+    }
+    if (snapshot.rolling) {
+        const rolling = document.createElement('span');
+        rolling.className = 'chat_sentinel_badge is_neutral';
+        rolling.textContent = `循环槽 ${snapshot.slot + 1}/10`;
+        badges.append(rolling);
     }
     head.append(time, badges);
 
@@ -104,7 +111,7 @@ export function renderQuarantine(container, items = []) {
 export function renderVersionDetail(container, { snapshot, chat, preview }, onAction) {
     container.innerHTML = '';
     const title = document.createElement('h4');
-    title.textContent = '版本详情';
+    title.textContent = snapshot.rolling ? '循环保护点详情' : '版本详情';
     const meta = document.createElement('dl');
     meta.className = 'chat_sentinel_detail_meta';
     const rows = [
@@ -146,14 +153,19 @@ export function renderVersionDetail(container, { snapshot, chat, preview }, onAc
 
     const actions = document.createElement('div');
     actions.className = 'chat_sentinel_detail_actions';
-    const keep = document.createElement('button');
-    keep.className = 'menu_button';
-    keep.textContent = snapshot.kept ? '取消长期保留' : '长期保留';
-    keep.addEventListener('click', () => onAction(snapshot.kept ? 'unkeep' : 'keep', snapshot, chat));
     const restore = document.createElement('button');
     restore.className = 'menu_button chat_sentinel_primary';
     restore.textContent = '恢复到这个版本';
     restore.addEventListener('click', () => onAction('restore', snapshot, chat));
+    if (snapshot.rolling) {
+        actions.append(restore);
+        container.append(title, meta, previewBox, actions);
+        return;
+    }
+    const keep = document.createElement('button');
+    keep.className = 'menu_button';
+    keep.textContent = snapshot.kept ? '取消长期保留' : '长期保留';
+    keep.addEventListener('click', () => onAction(snapshot.kept ? 'unkeep' : 'keep', snapshot, chat));
     const more = document.createElement('details');
     more.className = 'chat_sentinel_more';
     const summary = document.createElement('summary');

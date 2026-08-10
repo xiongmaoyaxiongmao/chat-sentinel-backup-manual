@@ -28,7 +28,7 @@
                         <dl class="chat_sentinel_health_grid">
                             <div><dt>自动守护</dt><dd data-summary-enabled>—</dd></div>
                             <div><dt>最近快照</dt><dd data-summary-latest>—</dd></div>
-                            <div><dt>已有版本</dt><dd data-summary-count>—</dd></div>
+                            <div><dt>循环保护点</dt><dd data-summary-count>—</dd></div>
                             <div><dt>本地存储</dt><dd data-summary-health>—</dd></div>
                         </dl>
                     </section>
@@ -111,16 +111,11 @@
                         </div>
                     </div>
                     <div class="chat_sentinel_setting_row">
-                        <label class="chat_sentinel_setting_copy" for="chat_sentinel_keep">
-                            <strong>每聊保留数</strong>
-                            <span>每个聊天保留的普通版本数量；长期保留不受影响。</span>
-                        </label>
-                        <div class="chat_sentinel_setting_control">
-                            <span class="chat_sentinel_number_field">
-                                <input id="chat_sentinel_keep" data-setting-keep type="number" min="5" max="500">
-                                <span>个版本</span>
-                            </span>
+                        <div class="chat_sentinel_setting_copy">
+                            <strong>循环保护点</strong>
+                            <p>每个聊天固定保留 10 份。第 11 次保护会原子覆盖该聊天最早的一份。</p>
                         </div>
+                        <div class="chat_sentinel_setting_control"><strong>固定 10 份</strong></div>
                     </div>
                     <h4 class="chat_sentinel_settings_group_heading">存储与安全</h4>
                     <div class="chat_sentinel_setting_row chat_sentinel_setting_row_wide">
